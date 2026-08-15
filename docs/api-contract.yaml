@@ -1,0 +1,3183 @@
+openapi: 3.0.3
+info:
+  title: TAP Photobooth Management API
+  version: 1.0.0
+  description: |
+    REST API contract for the **TAP Photobooth Management** system.
+
+    Covers 12 modules: auth, employees, customers, vouchers, bookings,
+    posts, holidays, templates, messages, dashboard, settings, upload.
+
+    ## Conventions
+
+    - Base path: `/api/v1`
+    - Every response uses a standard wrapper:
+      `{ "success": boolean, "data"?: any, "error"?: string }`
+    - Paginated responses add a `pagination` object.
+    - Authentication: Bearer JWT in the `Authorization` header
+      (`Authorization: Bearer <token>`).
+    - Roles: `admin`, `manager`, `staff`. Role restrictions are noted per
+      endpoint with the `x-required-roles` extension.
+
+    ## Pagination query parameters
+
+    | Param  | Default | Max | Notes                                  |
+    |--------|---------|-----|----------------------------------------|
+    | page   | 1       | -   | 1-indexed                              |
+    | limit  | 20      | 100 | items per page                         |
+    | search | -       | -   | free-text search                       |
+    | sort   | -       | -   | `field:asc` or `field:desc`            |
+
+    ## HTTP status codes
+
+    | Code | Meaning                       |
+    |------|-------------------------------|
+    | 200  | OK (GET, PUT)                 |
+    | 201  | Created (POST)                |
+    | 204  | No Content (DELETE)           |
+    | 400  | Validation error              |
+    | 401  | Missing / invalid token       |
+    | 403  | Valid token but wrong role    |
+    | 404  | Resource not found            |
+    | 500  | Internal server error         |
+  contact:
+    name: TAP Photobooth Team
+    url: https://github.com/anomalyco/photobooth
+  license:
+    name: Proprietary
+
+servers:
+  - url: https://api.tapphotobooth.com/api/v1
+    description: Production
+  - url: https://api-staging.tapphotobooth.com/api/v1
+    description: Staging
+  - url: http://localhost:3000/api/v1
+    description: Local development
+
+# Global default security: every endpoint requires a bearer token unless
+# overridden with `security: []` (e.g. /auth/login).
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Auth
+    description: Authentication & session management
+  - name: Employees
+    description: Staff accounts, roles, shifts
+  - name: Customers
+    description: End customers, birthdays, history
+  - name: Vouchers
+    description: Voucher definitions, issuance, usage
+  - name: Bookings
+    description: Photobooth sessions / bookings
+  - name: Posts
+    description: Marketing posts & publishing
+  - name: Holidays
+    description: Recurring holidays for automation
+  - name: Templates
+    description: Message templates with {{variables}}
+  - name: Messages
+    description: Message logs, send-now, schedule, stats
+  - name: Dashboard
+    description: Aggregated stats & reports
+  - name: Settings
+    description: Application settings & Zalo QR
+  - name: Upload
+    description: Image upload (Cloudinary)
+
+paths:
+  # ===========================================================================
+  # 1. AUTH
+  # ===========================================================================
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Login with email & password
+      description: Exchange credentials for a JWT access token.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: admin@tapphotobooth.com
+                password:
+                  type: string
+                  format: password
+                  minLength: 6
+                  example: secret123
+      responses:
+        '200':
+          description: Authenticated successfully
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          token:
+                            type: string
+                            description: JWT access token
+                          user:
+                            $ref: '#/components/schemas/Employee'
+              example:
+                success: true
+                data:
+                  token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+                  user:
+                    id: 550e8400-e29b-41d4-a716-446655440000
+                    full_name: Nguyen Van Admin
+                    phone: '0901234567'
+                    email: admin@tapphotobooth.com
+                    role: admin
+                    is_active: true
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error: Invalid email or password
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Logout (invalidate current session)
+      description: Server-side token invalidation. Client should also discard the token.
+      responses:
+        '204':
+          description: Logged out (no content)
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Get current authenticated user
+      responses:
+        '200':
+          description: Current user profile
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          user:
+                            $ref: '#/components/schemas/Employee'
+              example:
+                success: true
+                data:
+                  user:
+                    id: 550e8400-e29b-41d4-a716-446655440000
+                    full_name: Nguyen Van Admin
+                    phone: '0901234567'
+                    email: admin@tapphotobooth.com
+                    role: admin
+                    is_active: true
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Refresh access token
+      description: Issue a new access token using a valid (non-expired) token or refresh token.
+      responses:
+        '200':
+          description: New token issued
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          token:
+                            type: string
+              example:
+                success: true
+                data:
+                  token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  # ===========================================================================
+  # 2. EMPLOYEES
+  # ===========================================================================
+  /employees:
+    get:
+      tags: [Employees]
+      summary: List employees
+      description: Paginated list of staff. All authenticated roles may read.
+      x-required-roles: [admin, manager, staff]
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - $ref: '#/components/parameters/SearchParam'
+        - $ref: '#/components/parameters/SortParam'
+        - name: role
+          in: query
+          schema:
+            type: string
+            enum: [admin, manager, staff]
+        - name: is_active
+          in: query
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Paginated list of employees
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Employee'
+              example:
+                success: true
+                data:
+                  - id: 550e8400-e29b-41d4-a716-446655440000
+                    full_name: Nguyen Van Admin
+                    phone: '0901234567'
+                    email: admin@tapphotobooth.com
+                    role: admin
+                    is_active: true
+                    hire_date: '2024-01-15'
+                pagination:
+                  page: 1
+                  limit: 20
+                  total: 3
+                  totalPages: 1
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+    post:
+      tags: [Employees]
+      summary: Create an employee
+      description: Register a new staff account. Admin only.
+      x-required-roles: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmployeeCreate'
+            example:
+              full_name: Tran Thi Manager
+              phone: '0912345678'
+              email: manager@tapphotobooth.com
+              password: secret123
+              role: manager
+              hire_date: '2024-03-01'
+      responses:
+        '201':
+          description: Employee created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Employee'
+              example:
+                success: true
+                data:
+                  id: 660e8400-e29b-41d4-a716-446655440001
+                  full_name: Tran Thi Manager
+                  phone: '0912345678'
+                  email: manager@tapphotobooth.com
+                  role: manager
+                  is_active: true
+                  hire_date: '2024-03-01'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /employees/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdParam'
+    get:
+      tags: [Employees]
+      summary: Get an employee by id
+      x-required-roles: [admin, manager, staff]
+      responses:
+        '200':
+          description: Employee detail
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Employee'
+              example:
+                success: true
+                data:
+                  id: 550e8400-e29b-41d4-a716-446655440000
+                  full_name: Nguyen Van Admin
+                  phone: '0901234567'
+                  email: admin@tapphotobooth.com
+                  role: admin
+                  avatar_url: https://res.cloudinary.com/demo/image/upload/v1/avatar1.jpg
+                  is_active: true
+                  hire_date: '2024-01-15'
+                  created_at: '2024-01-15T08:00:00Z'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+    put:
+      tags: [Employees]
+      summary: Update an employee
+      description: Admin only. Managers may update limited fields (own profile / shift assignment).
+      x-required-roles: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmployeeUpdate'
+            example:
+              full_name: Nguyen Van Admin Updated
+              role: admin
+              is_active: true
+      responses:
+        '200':
+          description: Employee updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Employee'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+    delete:
+      tags: [Employees]
+      summary: Delete an employee (soft delete)
+      description: |
+        Sets `deleted_at`. The record is preserved for referential integrity
+        (shifts, bookings, posts). Admin only.
+      x-required-roles: [admin]
+      responses:
+        '204':
+          description: Employee soft-deleted (no content)
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /employees/{id}/shifts:
+    parameters:
+      - $ref: '#/components/parameters/IdParam'
+    get:
+      tags: [Employees]
+      summary: List shifts for an employee
+      x-required-roles: [admin, manager, staff]
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - name: from
+          in: query
+          description: Filter shifts starting on/after this date (ISO date).
+          schema:
+            type: string
+            format: date
+            example: '2024-08-01'
+        - name: to
+          in: query
+          description: Filter shifts starting on/before this date (ISO date).
+          schema:
+            type: string
+            format: date
+            example: '2024-08-31'
+      responses:
+        '200':
+          description: Paginated list of shifts
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Shift'
+              example:
+                success: true
+                data:
+                  - id: 770e8400-e29b-41d4-a716-446655440010
+                    employee_id: 550e8400-e29b-41d4-a716-446655440000
+                    date: '2024-08-12'
+                    start_time: '2024-08-12T08:00:00Z'
+                    end_time: '2024-08-12T16:00:00Z'
+                    check_in_time: '2024-08-12T08:05:00Z'
+                    status: completed
+                pagination:
+                  page: 1
+                  limit: 20
+                  total: 1
+                  totalPages: 1
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  # ===========================================================================
+  # 3. CUSTOMERS
+  # ===========================================================================
+  /customers:
+    get:
+      tags: [Customers]
+      summary: List customers
+      description: Paginated list of customers. All staff roles may read.
+      x-required-roles: [admin, manager, staff]
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - $ref: '#/components/parameters/SearchParam'
+        - $ref: '#/components/parameters/SortParam'
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [active, inactive, vip]
+        - name: birthday_month
+          in: query
+          description: Filter by birthday month (1-12).
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 12
+            example: 8
+      responses:
+        '200':
+          description: Paginated list of customers
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Customer'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+    post:
+      tags: [Customers]
+      summary: Create a customer
+      x-required-roles: [admin, manager, staff]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CustomerCreate'
+            example:
+              full_name: Le Thi Khach
+              phone: '0923456789'
+              email: khach@example.com
+              birthday: '1995-08-12'
+              gender: female
+              zalo_id: zalo_12345
+              notes: VIP, likes vintage style
+      responses:
+        '201':
+          description: Customer created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Customer'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /customers/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdParam'
+    get:
+      tags: [Customers]
+      summary: Get a customer by id
+      x-required-roles: [admin, manager, staff]
+      responses:
+        '200':
+          description: Customer detail
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Customer'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+    put:
+      tags: [Customers]
+      summary: Update a customer
+      x-required-roles: [admin, manager, staff]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CustomerUpdate'
+      responses:
+        '200':
+          description: Customer updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Customer'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+    delete:
+      tags: [Customers]
+      summary: Delete a customer
+      description: Soft delete (sets `deleted_at`). Admin only to protect customer data.
+      x-required-roles: [admin]
+      responses:
+        '204':
+          description: Customer soft-deleted (no content)
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /customers/{id}/bookings:
+    parameters:
+      - $ref: '#/components/parameters/IdParam'
+    get:
+      tags: [Customers]
+      summary: List bookings for a customer
+      x-required-roles: [admin, manager, staff]
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+      responses:
+        '200':
+          description: Paginated list of the customer's bookings
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Booking'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /customers/{id}/vouchers:
+    parameters:
+      - $ref: '#/components/parameters/IdParam'
+    get:
+      tags: [Customers]
+      summary: List vouchers issued to a customer
+      x-required-roles: [admin, manager, staff]
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [issued, used, expired]
+      responses:
+        '200':
+          description: Paginated list of customer vouchers
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/CustomerVoucher'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /customers/birthdays:
+    get:
+      tags: [Customers]
+      summary: List upcoming birthdays
+      description: Returns customers whose birthday falls within the chosen range.
+      x-required-roles: [admin, manager, staff]
+      parameters:
+        - name: range
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [today, week, month]
+            default: today
+      responses:
+        '200':
+          description: Birthday list for the given range
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          date:
+                            type: string
+                            format: date
+                            description: The reference date used for the query.
+                          total:
+                            type: integer
+                          customers:
+                            type: array
+                            items:
+                              $ref: '#/components/schemas/Customer'
+              example:
+                success: true
+                data:
+                  date: '2024-08-12'
+                  total: 2
+                  customers:
+                    - id: 880e8400-e29b-41d4-a716-446655440020
+                      full_name: Le Thi Khach
+                      phone: '0923456789'
+                      birthday: '1995-08-12'
+                      status: active
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  # ===========================================================================
+  # 4. VOUCHERS
+  # ===========================================================================
+  /vouchers:
+    get:
+      tags: [Vouchers]
+      summary: List vouchers
+      x-required-roles: [admin, manager, staff]
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - $ref: '#/components/parameters/SearchParam'
+        - $ref: '#/components/parameters/SortParam'
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [birthday, holiday, promo, welcome]
+        - name: is_active
+          in: query
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Paginated list of vouchers
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Voucher'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+    post:
+      tags: [Vouchers]
+      summary: Create a voucher
+      x-required-roles: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VoucherCreate'
+            example:
+              code: SUMMER20
+              name: Summer 20% Off
+              type: promo
+              discount_type: percent
+              value: 20
+              min_order: 100000
+              max_discount: 50000
+              total_quantity: 100
+              valid_from: '2024-06-01'
+              valid_until: '2024-08-31'
+              per_customer: 1
+      responses:
+        '201':
+          description: Voucher created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Voucher'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /vouchers/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdParam'
+    get:
+      tags: [Vouchers]
+      summary: Get a voucher by id
+      x-required-roles: [admin, manager, staff]
+      responses:
+        '200':
+          description: Voucher detail
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Voucher'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+    put:
+      tags: [Vouchers]
+      summary: Update a voucher
+      x-required-roles: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VoucherUpdate'
+      responses:
+        '200':
+          description: Voucher updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Voucher'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+    delete:
+      tags: [Vouchers]
+      summary: Delete a voucher
+      x-required-roles: [admin]
+      responses:
+        '204':
+          description: Voucher deleted (no content)
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /vouchers/{id}/issue:
+    parameters:
+      - $ref: '#/components/parameters/IdParam'
+    post:
+      tags: [Vouchers]
+      summary: Issue a voucher to a customer
+      description: |
+        Creates a `customer_voucher` (status=`issued`). If `expires_at` is
+        omitted, the voucher's `valid_until` (or the `voucher_expiry_days`
+        setting) is used.
+      x-required-roles: [admin, manager, staff]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [customer_id]
+              properties:
+                customer_id:
+                  type: string
+                  format: uuid
+                expires_at:
+                  type: string
+                  format: date-time
+                  description: Optional override expiry for this issuance.
+            example:
+              customer_id: 880e8400-e29b-41d4-a716-446655440020
+              expires_at: '2024-09-12T23:59:59Z'
+      responses:
+        '201':
+          description: Voucher issued to customer
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/CustomerVoucher'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /vouchers/check:
+    get:
+      tags: [Vouchers]
+      summary: Check voucher validity by code
+      description: Validates a voucher code without consuming it. Returns validity, remaining quantity, and customer eligibility context.
+      x-required-roles: [admin, manager, staff]
+      parameters:
+        - name: code
+          in: query
+          required: true
+          schema:
+            type: string
+            example: SUMMER20
+      responses:
+        '200':
+          description: Voucher check result
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          valid:
+                            type: boolean
+                          voucher:
+                            $ref: '#/components/schemas/Voucher'
+                          remaining:
+                            type: integer
+                            description: Remaining issuable quantity (-1 = unlimited).
+                          reason:
+                            type: string
+                            nullable: true
+                            description: Reason if invalid (e.g. expired, exhausted).
+              example:
+                success: true
+                data:
+                  valid: true
+                  voucher:
+                    id: 990e8400-e29b-41d4-a716-446655440030
+                    code: SUMMER20
+                    name: Summer 20% Off
+                    type: promo
+                    discount_type: percent
+                    value: 20
+                  remaining: 87
+                  reason: null
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /vouchers/{id}/usage:
+    parameters:
+      - $ref: '#/components/parameters/IdParam'
+    get:
+      tags: [Vouchers]
+      summary: Get usage history for a voucher
+      description: Returns all `customer_vouchers` issued/used for this voucher.
+      x-required-roles: [admin, manager, staff]
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+      responses:
+        '200':
+          description: Paginated usage history
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/CustomerVoucher'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  # ===========================================================================
+  # 5. BOOKINGS
+  # ===========================================================================
+  /bookings:
+    get:
+      tags: [Bookings]
+      summary: List bookings
+      x-required-roles: [admin, manager, staff]
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - $ref: '#/components/parameters/SearchParam'
+        - $ref: '#/components/parameters/SortParam'
+        - name: customer_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: employee_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [completed, cancelled, no-show]
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Paginated list of bookings
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Booking'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+    post:
+      tags: [Bookings]
+      summary: Create a booking
+      description: |
+        Creating a `completed` booking triggers the customer stats trigger
+        (increments `total_visits`, `total_spent`, sets `last_visit_at`).
+      x-required-roles: [admin, manager, staff]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BookingCreate'
+            example:
+              customer_id: 880e8400-e29b-41d4-a716-446655440020
+              employee_id: 550e8400-e29b-41d4-a716-446655440000
+              booking_date: '2024-08-12T14:30:00Z'
+              package_name: Premium Album
+              amount: 350000
+              voucher_id: 990e8400-e29b-41d4-a716-446655440099
+              photo_count: 12
+              notes: Anniversary session
+      responses:
+        '201':
+          description: Booking created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Booking'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /bookings/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdParam'
+    get:
+      tags: [Bookings]
+      summary: Get a booking by id
+      x-required-roles: [admin, manager, staff]
+      responses:
+        '200':
+          description: Booking detail
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Booking'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+    put:
+      tags: [Bookings]
+      summary: Update a booking
+      description: |
+        Changing status to/from `completed` adjusts customer stats via the
+        `update_customer_stats_on_booking` trigger.
+      x-required-roles: [admin, manager, staff]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BookingUpdate'
+      responses:
+        '200':
+          description: Booking updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Booking'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+    delete:
+      tags: [Bookings]
+      summary: Cancel a booking
+      description: |
+        Sets booking `status` to `cancelled`. Does not hard-delete the record.
+        If the booking was `completed`, the customer stats trigger reverts
+        `total_visits` / `total_spent`.
+      x-required-roles: [admin, manager, staff]
+      responses:
+        '204':
+          description: Booking cancelled (no content)
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  # ===========================================================================
+  # 6. POSTS
+  # ===========================================================================
+  /posts:
+    get:
+      tags: [Posts]
+      summary: List posts
+      x-required-roles: [admin, manager, staff]
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - $ref: '#/components/parameters/SearchParam'
+        - $ref: '#/components/parameters/SortParam'
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [draft, pending, published]
+      responses:
+        '200':
+          description: Paginated list of posts
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Post'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+    post:
+      tags: [Posts]
+      summary: Create a post
+      x-required-roles: [admin, manager]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PostCreate'
+            example:
+              title: Summer Promo 2024
+              content: Book now and get 20% off...
+              excerpt: 20% off all summer packages
+              image_url: https://res.cloudinary.com/demo/image/upload/v1/post1.jpg
+              scheduled_at: '2024-06-01T08:00:00Z'
+      responses:
+        '201':
+          description: Post created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Post'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /posts/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdParam'
+    get:
+      tags: [Posts]
+      summary: Get a post by id
+      x-required-roles: [admin, manager, staff]
+      responses:
+        '200':
+          description: Post detail
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Post'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+    put:
+      tags: [Posts]
+      summary: Update a post
+      x-required-roles: [admin, manager]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PostUpdate'
+      responses:
+        '200':
+          description: Post updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Post'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+    delete:
+      tags: [Posts]
+      summary: Delete a post (soft delete)
+      x-required-roles: [admin, manager]
+      responses:
+        '204':
+          description: Post soft-deleted (no content)
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /posts/{id}/publish:
+    parameters:
+      - $ref: '#/components/parameters/IdParam'
+    post:
+      tags: [Posts]
+      summary: Publish a post
+      description: Sets `status=published` and `published_at=now`. If `scheduled_at` is in the future the post may be scheduled instead.
+      x-required-roles: [admin, manager]
+      responses:
+        '200':
+          description: Post published
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Post'
+              example:
+                success: true
+                data:
+                  id: aab0e840-e29b-41d4-a716-446655440040
+                  title: Summer Promo 2024
+                  status: published
+                  published_at: '2024-06-01T08:00:00Z'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  # ===========================================================================
+  # 7. HOLIDAYS
+  # ===========================================================================
+  /holidays:
+    get:
+      tags: [Holidays]
+      summary: List holidays
+      x-required-roles: [admin, manager, staff]
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - name: is_active
+          in: query
+          schema:
+            type: boolean
+        - name: is_recurring
+          in: query
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Paginated list of holidays
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Holiday'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+    post:
+      tags: [Holidays]
+      summary: Create a holiday
+      x-required-roles: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HolidayCreate'
+            example:
+              name: Tet Nguyen Dan
+              date: '02-10'
+              is_recurring: false
+              specific_year: 2024
+              template_id: ccd0e840-e29b-41d4-a716-446655440050
+      responses:
+        '201':
+          description: Holiday created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Holiday'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /holidays/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdParam'
+    put:
+      tags: [Holidays]
+      summary: Update a holiday
+      x-required-roles: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HolidayUpdate'
+      responses:
+        '200':
+          description: Holiday updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/Holiday'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+    delete:
+      tags: [Holidays]
+      summary: Delete a holiday
+      x-required-roles: [admin]
+      responses:
+        '204':
+          description: Holiday deleted (no content)
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  # ===========================================================================
+  # 8. TEMPLATES
+  # ===========================================================================
+  /templates:
+    get:
+      tags: [Templates]
+      summary: List message templates
+      x-required-roles: [admin, manager, staff]
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - name: channel
+          in: query
+          schema:
+            type: string
+            enum: [zalo, email, sms]
+        - name: occasion
+          in: query
+          schema:
+            type: string
+            enum: [birthday, tet, giangsinh, 8_3, 20_10, valentine, promo, welcome, custom]
+      responses:
+        '200':
+          description: Paginated list of templates
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/MessageTemplate'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+    post:
+      tags: [Templates]
+      summary: Create a message template
+      x-required-roles: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TemplateCreate'
+            example:
+              name: Birthday Email
+              occasion: birthday
+              channel: email
+              subject: Happy Birthday from {{shop_name}}!
+              body: Dear {{customer_name}}, happy birthday! Here is your voucher {{voucher_code}}.
+      responses:
+        '201':
+          description: Template created
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/MessageTemplate'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /templates/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdParam'
+    put:
+      tags: [Templates]
+      summary: Update a message template
+      x-required-roles: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TemplateUpdate'
+      responses:
+        '200':
+          description: Template updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/MessageTemplate'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+    delete:
+      tags: [Templates]
+      summary: Delete a message template
+      x-required-roles: [admin]
+      responses:
+        '204':
+          description: Template deleted (no content)
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  # ===========================================================================
+  # 9. MESSAGES
+  # ===========================================================================
+  /messages/logs:
+    get:
+      tags: [Messages]
+      summary: List message logs
+      x-required-roles: [admin, manager, staff]
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - $ref: '#/components/parameters/SortParam'
+        - name: customer_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: channel
+          in: query
+          schema:
+            type: string
+            enum: [zalo, email, sms]
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, sent, failed, delivered]
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Paginated list of message logs
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/MessageLog'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /messages/send-now:
+    post:
+      tags: [Messages]
+      summary: Send a message immediately
+      description: |
+        Renders the template, sends via the chosen channel (default = template
+        channel), creates a `message_log` with status `sent`/`failed`.
+        If `voucher_id` is provided, a `customer_voucher` is issued first and
+        the `{{voucher_code}}` placeholder is populated.
+      x-required-roles: [admin, manager, staff]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendMessageRequest'
+            example:
+              customer_id: 880e8400-e29b-41d4-a716-446655440020
+              template_id: dde0e840-e29b-41d4-a716-446655440060
+              channel: zalo
+      responses:
+        '201':
+          description: Message send attempt recorded
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/MessageLog'
+              example:
+                success: true
+                data:
+                  id: eef0e840-e29b-41d4-a716-446655440070
+                  customer_id: 880e8400-e29b-41d4-a716-446655440020
+                  template_id: dde0e840-e29b-41d4-a716-446655440060
+                  channel: zalo
+                  status: sent
+                  sent_at: '2024-08-12T08:00:05Z'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /messages/scheduled:
+    get:
+      tags: [Messages]
+      summary: List scheduled (pending) messages
+      description: Returns `message_logs` with `status=pending` and a future `scheduled_at`.
+      x-required-roles: [admin, manager, staff]
+      parameters:
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: Paginated list of scheduled messages
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PaginatedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/MessageLog'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /messages/schedule:
+    post:
+      tags: [Messages]
+      summary: Schedule a message
+      description: Creates a `message_log` with `status=pending` and the given `scheduled_at`. The cron scheduler picks it up when due.
+      x-required-roles: [admin, manager, staff]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScheduleMessageRequest'
+            example:
+              customer_id: 880e8400-e29b-41d4-a716-446655440020
+              template_id: dde0e840-e29b-41d4-a716-446655440060
+              scheduled_at: '2024-08-12T08:00:00Z'
+              channel: zalo
+              voucher_id: 990e8400-e29b-41d4-a716-446655440030
+      responses:
+        '201':
+          description: Message scheduled
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/MessageLog'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /messages/stats:
+    get:
+      tags: [Messages]
+      summary: Message statistics
+      description: Aggregated send/delivery stats over a date range.
+      x-required-roles: [admin, manager, staff]
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+            example: '2024-08-01'
+        - name: to
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+            example: '2024-08-31'
+      responses:
+        '200':
+          description: Aggregated message stats
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/MessageStats'
+              example:
+                success: true
+                data:
+                  total: 150
+                  sent: 120
+                  failed: 10
+                  delivered: 110
+                  pending: 20
+                  by_channel:
+                    zalo: 90
+                    email: 50
+                    sms: 10
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  # ===========================================================================
+  # 10. DASHBOARD
+  # ===========================================================================
+  /dashboard/stats:
+    get:
+      tags: [Dashboard]
+      summary: Dashboard summary stats
+      description: Headline numbers for the dashboard (today + totals).
+      x-required-roles: [admin, manager, staff]
+      responses:
+        '200':
+          description: Dashboard stats
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/DashboardStats'
+              example:
+                success: true
+                data:
+                  customers_today: 12
+                  bookings_today: 8
+                  vouchers_used_today: 5
+                  revenue_today: 2800000
+                  customers_total: 134
+                  bookings_total: 890
+                  vouchers_active: 23
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /dashboard/revenue:
+    get:
+      tags: [Dashboard]
+      summary: Revenue time series
+      x-required-roles: [admin, manager, staff]
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Monthly revenue series
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          series:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                period:
+                                  type: string
+                                  description: 'YYYY-MM'
+                                  example: '2024-08'
+                                revenue:
+                                  type: number
+                                  format: double
+                                  example: 85000000
+              example:
+                success: true
+                data:
+                  series:
+                    - period: '2024-06'
+                      revenue: 72000000
+                    - period: '2024-07'
+                      revenue: 81000000
+                    - period: '2024-08'
+                      revenue: 85000000
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /dashboard/customers:
+    get:
+      tags: [Dashboard]
+      summary: Customer growth time series
+      x-required-roles: [admin, manager, staff]
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Customer growth series
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          series:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                period:
+                                  type: string
+                                  example: '2024-08'
+                                new_customers:
+                                  type: integer
+                                  example: 23
+                                total_customers:
+                                  type: integer
+                                  example: 134
+              example:
+                success: true
+                data:
+                  series:
+                    - period: '2024-06'
+                      new_customers: 18
+                      total_customers: 95
+                    - period: '2024-07'
+                      new_customers: 21
+                      total_customers: 116
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /dashboard/vouchers:
+    get:
+      tags: [Dashboard]
+      summary: Voucher usage statistics
+      x-required-roles: [admin, manager, staff]
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Voucher usage stats
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          total_issued:
+                            type: integer
+                          total_used:
+                            type: integer
+                          usage_rate:
+                            type: number
+                            format: double
+                            description: used / issued ratio (0-1)
+                          by_type:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                type:
+                                  type: string
+                                  enum: [birthday, holiday, promo, welcome]
+                                issued:
+                                  type: integer
+                                used:
+                                  type: integer
+              example:
+                success: true
+                data:
+                  total_issued: 200
+                  total_used: 145
+                  usage_rate: 0.725
+                  by_type:
+                    - type: birthday
+                      issued: 80
+                      used: 70
+                    - type: promo
+                      issued: 120
+                      used: 75
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  # ===========================================================================
+  # 11. SETTINGS
+  # ===========================================================================
+  /settings:
+    get:
+      tags: [Settings]
+      summary: List application settings
+      description: Returns all key/value settings. Sensitive keys (e.g. `gmail_app_password`) may be masked depending on caller role.
+      x-required-roles: [admin, manager, staff]
+      responses:
+        '200':
+          description: Application settings
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Setting'
+              example:
+                success: true
+                data:
+                  - id: fff0e840-e29b-41d4-a716-446655440080
+                    key: shop_name
+                    value: TAP Photobooth
+                    description: Display name of the photobooth shop
+                    updated_at: '2024-01-15T08:00:00Z'
+                  - key: zalo_oa_id
+                    value: '1234567890'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+    put:
+      tags: [Settings]
+      summary: Update application settings
+      description: |
+        Bulk upsert. Body is a flat map of `{ key: value }`. Admin only.
+      x-required-roles: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Map of setting key to value.
+              additionalProperties:
+                type: string
+              example:
+                shop_name: TAP Photobooth Premium
+                zalo_oa_id: '1234567890'
+                voucher_expiry_days: '14'
+      responses:
+        '200':
+          description: Settings updated
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Setting'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /settings/zalo-qr:
+    get:
+      tags: [Settings]
+      summary: Get Zalo OA QR code URL
+      description: Returns a generated QR code image URL for the configured Zalo Official Account.
+      x-required-roles: [admin, manager, staff]
+      responses:
+        '200':
+          description: Zalo OA QR code
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          qr_code_url:
+                            type: string
+                            format: uri
+              example:
+                success: true
+                data:
+                  qr_code_url: https://api.qrserver.com/v1/create-qr-code/?data=https://zalo.me/1234567890
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  # ===========================================================================
+  # 12. UPLOAD
+  # ===========================================================================
+  /upload:
+    post:
+      tags: [Upload]
+      summary: Upload an image
+      description: Multipart form upload to Cloudinary. Returns the hosted URL and public_id.
+      x-required-roles: [admin, manager, staff]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Image file (jpg, png, webp).
+      responses:
+        '200':
+          description: File uploaded
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SuccessResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          url:
+                            type: string
+                            format: uri
+                          public_id:
+                            type: string
+              example:
+                success: true
+                data:
+                  url: https://res.cloudinary.com/demo/image/upload/v1/photobooth/post1.jpg
+                  public_id: photobooth/post1
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+# =============================================================================
+# COMPONENTS
+# =============================================================================
+components:
+  # ---------------------------------------------------------------------------
+  # Security schemes
+  # ---------------------------------------------------------------------------
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Use `Authorization: Bearer <token>` where `<token>` is the JWT
+        returned by `POST /auth/login` or `POST /auth/refresh`.
+
+  # ---------------------------------------------------------------------------
+  # Reusable parameters
+  # ---------------------------------------------------------------------------
+  parameters:
+    PageParam:
+      name: page
+      in: query
+      description: Page number (1-indexed).
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    LimitParam:
+      name: limit
+      in: query
+      description: Items per page (max 100).
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    SearchParam:
+      name: search
+      in: query
+      description: Free-text search term.
+      schema:
+        type: string
+    SortParam:
+      name: sort
+      in: query
+      description: Sort order, e.g. `created_at:desc`.
+      schema:
+        type: string
+        pattern: '^[a-z_]+:(asc|desc)$'
+        example: created_at:desc
+    IdParam:
+      name: id
+      in: path
+      required: true
+      description: Resource UUID.
+      schema:
+        type: string
+        format: uuid
+
+  # ---------------------------------------------------------------------------
+  # Reusable responses
+  # ---------------------------------------------------------------------------
+  responses:
+    ValidationError:
+      description: Request validation failed (zod schema mismatch).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error: 'Validation failed: email must be a valid email address'
+    UnauthorizedError:
+      description: Missing or invalid authentication token.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error: 'Unauthorized: missing or invalid token'
+    ForbiddenError:
+      description: Authenticated but lacking the required role.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error: 'Forbidden: insufficient role'
+    NotFoundError:
+      description: Resource not found.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            success: false
+            error: Resource not found
+
+  # ---------------------------------------------------------------------------
+  # Schemas
+  # ---------------------------------------------------------------------------
+  schemas:
+    # --- Generic wrappers ---------------------------------------------------
+    SuccessResponse:
+      type: object
+      description: Base success envelope.
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          description: Response payload (varies per endpoint).
+    PaginatedResponse:
+      type: object
+      description: Base paginated success envelope.
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          description: Array of items (varies per endpoint).
+          type: array
+          items: {}
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+    ErrorResponse:
+      type: object
+      description: Standard error envelope.
+      required: [success, error]
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: string
+          example: Something went wrong
+    Pagination:
+      type: object
+      description: Pagination metadata.
+      properties:
+        page:
+          type: integer
+          example: 1
+        limit:
+          type: integer
+          example: 20
+        total:
+          type: integer
+          example: 134
+        totalPages:
+          type: integer
+          example: 7
+
+    # --- Employee -----------------------------------------------------------
+    Employee:
+      type: object
+      description: Staff account.
+      properties:
+        id:
+          type: string
+          format: uuid
+        full_name:
+          type: string
+        phone:
+          type: string
+        email:
+          type: string
+          format: email
+          nullable: true
+        role:
+          type: string
+          enum: [admin, manager, staff]
+        avatar_url:
+          type: string
+          format: uri
+          nullable: true
+        is_active:
+          type: boolean
+        hire_date:
+          type: string
+          format: date
+          nullable: true
+        deleted_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    EmployeeCreate:
+      type: object
+      required: [full_name, phone, password, role]
+      properties:
+        full_name:
+          type: string
+        phone:
+          type: string
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+          minLength: 6
+        role:
+          type: string
+          enum: [admin, manager, staff]
+        hire_date:
+          type: string
+          format: date
+    EmployeeUpdate:
+      type: object
+      properties:
+        full_name:
+          type: string
+        phone:
+          type: string
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+          description: Optional new password.
+        role:
+          type: string
+          enum: [admin, manager, staff]
+        avatar_url:
+          type: string
+          format: uri
+        is_active:
+          type: boolean
+        hire_date:
+          type: string
+          format: date
+
+    # --- Shift --------------------------------------------------------------
+    Shift:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        employee_id:
+          type: string
+          format: uuid
+        date:
+          type: string
+          format: date
+        start_time:
+          type: string
+          format: date-time
+        end_time:
+          type: string
+          format: date-time
+        check_in_time:
+          type: string
+          format: date-time
+          nullable: true
+        check_out_time:
+          type: string
+          format: date-time
+          nullable: true
+        status:
+          type: string
+          enum: [scheduled, completed, absent]
+        notes:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    # --- Customer -----------------------------------------------------------
+    Customer:
+      type: object
+      description: End customer (photobooth guest).
+      properties:
+        id:
+          type: string
+          format: uuid
+        full_name:
+          type: string
+        phone:
+          type: string
+        email:
+          type: string
+          format: email
+          nullable: true
+        birthday:
+          type: string
+          format: date
+          nullable: true
+        gender:
+          type: string
+          enum: [male, female, other]
+          nullable: true
+        zalo_id:
+          type: string
+          nullable: true
+        total_visits:
+          type: integer
+          minimum: 0
+        total_spent:
+          type: number
+          format: double
+          minimum: 0
+        status:
+          type: string
+          enum: [active, inactive, vip]
+        registered_at:
+          type: string
+          format: date-time
+        last_visit_at:
+          type: string
+          format: date-time
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+        deleted_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    CustomerCreate:
+      type: object
+      required: [full_name, phone]
+      properties:
+        full_name:
+          type: string
+        phone:
+          type: string
+        email:
+          type: string
+          format: email
+        birthday:
+          type: string
+          format: date
+        gender:
+          type: string
+          enum: [male, female, other]
+        zalo_id:
+          type: string
+        notes:
+          type: string
+    CustomerUpdate:
+      type: object
+      properties:
+        full_name:
+          type: string
+        phone:
+          type: string
+        email:
+          type: string
+          format: email
+        birthday:
+          type: string
+          format: date
+        gender:
+          type: string
+          enum: [male, female, other]
+        zalo_id:
+          type: string
+        status:
+          type: string
+          enum: [active, inactive, vip]
+        notes:
+          type: string
+
+    # --- Voucher ------------------------------------------------------------
+    Voucher:
+      type: object
+      description: Voucher definition (template). `total_quantity = -1` means unlimited.
+      properties:
+        id:
+          type: string
+          format: uuid
+        code:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+          enum: [birthday, holiday, promo, welcome]
+        discount_type:
+          type: string
+          enum: [percent, fixed]
+        value:
+          type: number
+          format: double
+          minimum: 0
+        min_order:
+          type: number
+          format: double
+          minimum: 0
+        max_discount:
+          type: number
+          format: double
+          nullable: true
+        total_quantity:
+          type: integer
+          minimum: -1
+          description: '-1 means unlimited.'
+        used_count:
+          type: integer
+          minimum: 0
+        valid_from:
+          type: string
+          format: date
+        valid_until:
+          type: string
+          format: date
+        is_active:
+          type: boolean
+        per_customer:
+          type: integer
+          minimum: 1
+        created_by:
+          type: string
+          format: uuid
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    VoucherCreate:
+      type: object
+      required: [code, name, type, discount_type, value, valid_from, valid_until]
+      properties:
+        code:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+          enum: [birthday, holiday, promo, welcome]
+        discount_type:
+          type: string
+          enum: [percent, fixed]
+        value:
+          type: number
+          format: double
+          minimum: 0
+        min_order:
+          type: number
+          format: double
+          minimum: 0
+          default: 0
+        max_discount:
+          type: number
+          format: double
+        total_quantity:
+          type: integer
+          minimum: -1
+          default: -1
+        valid_from:
+          type: string
+          format: date
+        valid_until:
+          type: string
+          format: date
+        per_customer:
+          type: integer
+          minimum: 1
+          default: 1
+    VoucherUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        discount_type:
+          type: string
+          enum: [percent, fixed]
+        value:
+          type: number
+          format: double
+        min_order:
+          type: number
+          format: double
+        max_discount:
+          type: number
+          format: double
+        total_quantity:
+          type: integer
+          minimum: -1
+        valid_from:
+          type: string
+          format: date
+        valid_until:
+          type: string
+          format: date
+        is_active:
+          type: boolean
+        per_customer:
+          type: integer
+          minimum: 1
+
+    # --- CustomerVoucher ----------------------------------------------------
+    CustomerVoucher:
+      type: object
+      description: A voucher issued to a specific customer.
+      properties:
+        id:
+          type: string
+          format: uuid
+        customer_id:
+          type: string
+          format: uuid
+        voucher_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [issued, used, expired]
+        issued_at:
+          type: string
+          format: date-time
+        used_at:
+          type: string
+          format: date-time
+          nullable: true
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        booking_id:
+          type: string
+          format: uuid
+          nullable: true
+        zalo_message_id:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    # --- Booking ------------------------------------------------------------
+    Booking:
+      type: object
+      description: Photobooth session.
+      properties:
+        id:
+          type: string
+          format: uuid
+        customer_id:
+          type: string
+          format: uuid
+        employee_id:
+          type: string
+          format: uuid
+          nullable: true
+        booking_date:
+          type: string
+          format: date-time
+        package_name:
+          type: string
+          nullable: true
+        amount:
+          type: number
+          format: double
+          minimum: 0
+        status:
+          type: string
+          enum: [completed, cancelled, no-show]
+        voucher_id:
+          type: string
+          format: uuid
+          nullable: true
+        photo_count:
+          type: integer
+          minimum: 0
+        notes:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    BookingCreate:
+      type: object
+      required: [customer_id, booking_date]
+      properties:
+        customer_id:
+          type: string
+          format: uuid
+        employee_id:
+          type: string
+          format: uuid
+        booking_date:
+          type: string
+          format: date-time
+        package_name:
+          type: string
+        amount:
+          type: number
+          format: double
+          minimum: 0
+          default: 0
+        voucher_id:
+          type: string
+          format: uuid
+        photo_count:
+          type: integer
+          minimum: 0
+          default: 0
+        notes:
+          type: string
+    BookingUpdate:
+      type: object
+      properties:
+        employee_id:
+          type: string
+          format: uuid
+        booking_date:
+          type: string
+          format: date-time
+        package_name:
+          type: string
+        amount:
+          type: number
+          format: double
+        status:
+          type: string
+          enum: [completed, cancelled, no-show]
+        voucher_id:
+          type: string
+          format: uuid
+        photo_count:
+          type: integer
+        notes:
+          type: string
+
+    # --- Post ---------------------------------------------------------------
+    Post:
+      type: object
+      description: Marketing post / article.
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        slug:
+          type: string
+        content:
+          type: string
+        excerpt:
+          type: string
+          nullable: true
+        image_url:
+          type: string
+          format: uri
+          nullable: true
+        status:
+          type: string
+          enum: [draft, pending, published]
+        scheduled_at:
+          type: string
+          format: date-time
+          nullable: true
+        published_at:
+          type: string
+          format: date-time
+          nullable: true
+        author_id:
+          type: string
+          format: uuid
+          nullable: true
+        deleted_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    PostCreate:
+      type: object
+      required: [title, content]
+      properties:
+        title:
+          type: string
+        content:
+          type: string
+        excerpt:
+          type: string
+        image_url:
+          type: string
+          format: uri
+        scheduled_at:
+          type: string
+          format: date-time
+    PostUpdate:
+      type: object
+      properties:
+        title:
+          type: string
+        content:
+          type: string
+        excerpt:
+          type: string
+        image_url:
+          type: string
+          format: uri
+        scheduled_at:
+          type: string
+          format: date-time
+
+    # --- Holiday ------------------------------------------------------------
+    Holiday:
+      type: object
+      description: Recurring or one-off holiday. `date` is `MM-DD`; `specific_year` for one-off.
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        date:
+          type: string
+          pattern: '^\d{2}-\d{2}$'
+          description: 'Month-day in MM-DD format.'
+          example: '03-08'
+        is_recurring:
+          type: boolean
+        specific_year:
+          type: integer
+          nullable: true
+        template_id:
+          type: string
+          format: uuid
+          nullable: true
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    HolidayCreate:
+      type: object
+      required: [name, date]
+      properties:
+        name:
+          type: string
+        date:
+          type: string
+          pattern: '^\d{2}-\d{2}$'
+        is_recurring:
+          type: boolean
+          default: true
+        specific_year:
+          type: integer
+        template_id:
+          type: string
+          format: uuid
+    HolidayUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        date:
+          type: string
+          pattern: '^\d{2}-\d{2}$'
+        is_recurring:
+          type: boolean
+        specific_year:
+          type: integer
+        template_id:
+          type: string
+          format: uuid
+        is_active:
+          type: boolean
+
+    # --- MessageTemplate ----------------------------------------------------
+    MessageTemplate:
+      type: object
+      description: Reusable message body with `{{variable}}` placeholders.
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        occasion:
+          type: string
+          enum: [birthday, tet, giangsinh, 8_3, 20_10, valentine, promo, welcome, custom]
+        channel:
+          type: string
+          enum: [zalo, email, sms]
+        subject:
+          type: string
+          nullable: true
+          description: Required for email channel.
+        body:
+          type: string
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    TemplateCreate:
+      type: object
+      required: [name, occasion, channel, body]
+      properties:
+        name:
+          type: string
+        occasion:
+          type: string
+          enum: [birthday, tet, giangsinh, 8_3, 20_10, valentine, promo, welcome, custom]
+        channel:
+          type: string
+          enum: [zalo, email, sms]
+        subject:
+          type: string
+        body:
+          type: string
+    TemplateUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        occasion:
+          type: string
+          enum: [birthday, tet, giangsinh, 8_3, 20_10, valentine, promo, welcome, custom]
+        channel:
+          type: string
+          enum: [zalo, email, sms]
+        subject:
+          type: string
+        body:
+          type: string
+        is_active:
+          type: boolean
+
+    # --- MessageLog ---------------------------------------------------------
+    MessageLog:
+      type: object
+      description: Audit trail entry for a sent/attempted message (append-only).
+      properties:
+        id:
+          type: string
+          format: uuid
+        customer_id:
+          type: string
+          format: uuid
+        template_id:
+          type: string
+          format: uuid
+          nullable: true
+        voucher_id:
+          type: string
+          format: uuid
+          nullable: true
+        channel:
+          type: string
+          enum: [zalo, email, sms]
+        status:
+          type: string
+          enum: [pending, sent, failed, delivered]
+        content_sent:
+          type: string
+          nullable: true
+        error_message:
+          type: string
+          nullable: true
+        scheduled_at:
+          type: string
+          format: date-time
+          nullable: true
+        sent_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    # --- Message request bodies --------------------------------------------
+    SendMessageRequest:
+      type: object
+      required: [customer_id, template_id]
+      properties:
+        customer_id:
+          type: string
+          format: uuid
+        template_id:
+          type: string
+          format: uuid
+        channel:
+          type: string
+          enum: [zalo, email, sms]
+          description: Overrides the template channel if provided.
+        voucher_id:
+          type: string
+          format: uuid
+          description: If provided, issues a customer_voucher and fills {{voucher_code}}.
+    ScheduleMessageRequest:
+      type: object
+      required: [customer_id, template_id, scheduled_at]
+      properties:
+        customer_id:
+          type: string
+          format: uuid
+        template_id:
+          type: string
+          format: uuid
+        scheduled_at:
+          type: string
+          format: date-time
+        channel:
+          type: string
+          enum: [zalo, email, sms]
+        voucher_id:
+          type: string
+          format: uuid
+
+    # --- MessageStats -------------------------------------------------------
+    MessageStats:
+      type: object
+      properties:
+        total:
+          type: integer
+        sent:
+          type: integer
+        failed:
+          type: integer
+        delivered:
+          type: integer
+        pending:
+          type: integer
+        by_channel:
+          type: object
+          additionalProperties:
+            type: integer
+          description: Count per channel (zalo, email, sms).
+
+    # --- DashboardStats -----------------------------------------------------
+    DashboardStats:
+      type: object
+      properties:
+        customers_today:
+          type: integer
+        bookings_today:
+          type: integer
+        vouchers_used_today:
+          type: integer
+        revenue_today:
+          type: number
+          format: double
+        customers_total:
+          type: integer
+        bookings_total:
+          type: integer
+        vouchers_active:
+          type: integer
+
+    # --- Setting ------------------------------------------------------------
+    Setting:
+      type: object
+      description: Application key/value setting.
+      properties:
+        id:
+          type: string
+          format: uuid
+        key:
+          type: string
+          example: shop_name
+        value:
+          type: string
+          nullable: true
+          example: TAP Photobooth
+        description:
+          type: string
+          nullable: true
+        updated_at:
+          type: string
+          format: date-time

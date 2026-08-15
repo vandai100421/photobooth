@@ -1,0 +1,76 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "custom": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Custom_1 API",
+      "options": {
+        "baseURL": "{env:CUSTOM_BASE_URL}",
+        "apiKey": "{env:CUSTOM_API_KEY}"
+      },
+      "models": {
+        "glm-5.2": {
+          "name": "GLM 5.2"
+        }
+      }
+    }
+  },
+  "model": "custom/glm-5.2",
+  "default_agent": "lead",
+  "permission": {
+    "bash": "allow",
+    "edit": "allow",
+    "read": "allow",
+    "glob": "allow",
+    "grep": "allow",
+    "list": "allow",
+    "task": "allow",
+    "todowrite": "allow",
+    "webfetch": "allow",
+    "websearch": "allow",
+    "lsp": "allow",
+    "skill": "allow",
+    "external_directory": "allow"
+  },
+  "instructions": [
+    "PROJECT.md",
+    "ARCHITECTURE.md",
+    "CODING_STANDARDS.md",
+    "DEVELOPMENT_RULES.md",
+    "TASKS.md"
+  ],
+  "agent": {
+    "lead": {
+      "description": "Project Manager — primary agent. Nhận mục tiêu sprint, phân task, điều phối các subagent, theo dõi tiến độ, tổng hợp và kiểm tra kết quả.",
+      "mode": "primary"
+    },
+    "arch": {
+      "description": "Architecture & Integration Reviewer — data contracts, module boundaries, API contract (OpenAPI/Swagger), cross-system consistency.",
+      "mode": "subagent"
+    },
+    "backend": {
+      "description": "Backend Specialist — Node.js + Express, REST API (/api/v1), auth (Supabase JWT), CRUD modules: employees, customers, vouchers, bookings, posts, holidays, templates, settings, dashboard.",
+      "mode": "subagent"
+    },
+    "frontend": {
+      "description": "Frontend Specialist — React + TailwindCSS, React Router, các trang: Dashboard, Employees, Customers, Vouchers, Bookings, Posts, Holidays, Messages, Reports, Settings. Responsive + loading states + error handling.",
+      "mode": "subagent"
+    },
+    "database": {
+      "description": "Database Specialist — PostgreSQL/Supabase, thiết kế schema (11 bảng), migration SQL, RLS policies, index, triggers (tự động tăng total_visits/total_spent), Supabase Auth.",
+      "mode": "subagent"
+    },
+    "automation": {
+      "description": "Automation Specialist — node-cron (8:00 AM daily), Zalo OA API (gửi tin + webhook follow), Gmail SMTP fallback (nodemailer), logic sinh nhật/ngày lễ/nhắc khách quay lại, template rendering ({{customer_name}}, {{voucher_code}}).",
+      "mode": "subagent"
+    },
+    "devops": {
+      "description": "DevOps Specialist — deploy Frontend lên Vercel, deploy Backend lên Railway/Render, environment variables, Cloudinary setup, monitoring (Sentry free), GitHub repo + CI/CD.",
+      "mode": "subagent"
+    },
+    "qa": {
+      "description": "QA & Testing Specialist — test API (Postman collection), test UI (CRUD flow), test automation (cron, Zalo, Gmail), edge cases (voucher hết lượt/hết hạn, fallback Zalo→Email), Jest unit tests.",
+      "mode": "subagent"
+    }
+  }
+}
