@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const supabase = require('../../config/supabase');
+const authClient = require('../../config/authClient');
 const env = require('../../config/env');
 const AppError = require('../../utils/AppError');
 
@@ -92,7 +93,7 @@ const login = async (identifier, password) => {
     ? await resolveEmailByPhone(normalizePhone(identifier))
     : identifier.trim();
 
-  const { data, error } = await supabase.auth.signInWithPassword({
+  const { data, error } = await authClient.auth.signInWithPassword({
     email,
     password,
   });
@@ -159,7 +160,7 @@ const refresh = async (userId, email, role) => {
 
 const logout = async (accessToken) => {
   if (isDemoMode || !accessToken) return;
-  await supabase.auth.signOut({ accessToken });
+  await authClient.auth.signOut({ accessToken });
 };
 
 module.exports = { login, me, refresh, logout, isDemoMode };

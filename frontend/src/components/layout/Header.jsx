@@ -30,7 +30,7 @@ export default function Header({ onMenuClick }) {
           </svg>
         </button>
         <h1 className="text-base font-semibold text-gray-800 md:text-lg">
-          TAP Photobooth
+          THE TAP
         </h1>
       </div>
 

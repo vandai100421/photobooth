@@ -7,12 +7,15 @@ import Skeleton from '../components/ui/Skeleton';
 import Table from '../components/ui/Table';
 import Toast from '../components/ui/Toast';
 import dashboardService from '../services/dashboardService';
+import dailyRevenueService from '../services/dailyRevenueService';
+import { useAuth } from '../hooks/useAuth';
 import { formatCurrency } from '../utils/formatCurrency';
 import { exportCSV } from '../utils/exportCSV';
 import { VOUCHER_TYPE_LABELS } from '../utils/constants';
 
 const TABS = [
   { value: 'revenue', label: 'Doanh thu' },
+  { value: 'daily', label: 'Nhập doanh thu' },
   { value: 'customers', label: 'Khách hàng' },
   { value: 'vouchers', label: 'Voucher' },
 ];
@@ -69,6 +72,19 @@ export default function Reports() {
   const [voucherLoading, setVoucherLoading] = useState(false);
   const [voucherError, setVoucherError] = useState('');
 
+  const [dailyRows, setDailyRows] = useState([]);
+  const [dailyLoading, setDailyLoading] = useState(false);
+  const [dailyError, setDailyError] = useState('');
+  const [formDate, setFormDate] = useState(toISODate(new Date()));
+  const [formAmount, setFormAmount] = useState('');
+  const [formNote, setFormNote] = useState('');
+  const [editingId, setEditingId] = useState(null);
+  const [savingDaily, setSavingDaily] = useState(false);
+  const [formError, setFormError] = useState('');
+
+  const { user } = useAuth();
+  const canEditDaily = ['admin', 'manager'].includes(user?.role);
+
   const [toast, setToast] = useState({ message: '', variant: 'info' });
   const showToast = useCallback(
     (message, variant = 'success') => setToast({ message, variant }),
@@ -83,7 +99,9 @@ export default function Reports() {
     setRevenueError('');
     try {
       const res = await dashboardService.revenue({ from, to });
-      setRevenueSeries(res?.data?.series ?? []);
+      setRevenueSeries(
+        Array.isArray(res?.data) ? res.data : res?.data?.series ?? [],
+      );
     } catch (err) {
       setRevenueError(getErrorMessage(err, 'Không thể tải doanh thu.'));
     } finally {
@@ -125,6 +143,148 @@ export default function Reports() {
     fetchVouchers();
   }, [fetchRevenue, fetchCustomers, fetchVouchers]);
 
+  const fetchDaily = useCallback(async () => {
+    if (!rangeValid) return;
+    setDailyLoading(true);
+    setDailyError('');
+    try {
+      const res = await dailyRevenueService.list({ from, to });
+      setDailyRows(res?.data ?? []);
+    } catch (err) {
+      setDailyError(getErrorMessage(err, 'Không thể tải doanh thu theo ngày.'));
+    } finally {
+      setDailyLoading(false);
+    }
+  }, [from, to, rangeValid]);
+
+  useEffect(() => {
+    fetchDaily();
+  }, [fetchDaily]);
+
+  const resetDailyForm = () => {
+    setFormDate(toISODate(new Date()));
+    setFormAmount('');
+    setFormNote('');
+    setEditingId(null);
+    setFormError('');
+  };
+
+  const startEditDaily = (row) => {
+    setEditingId(row.id);
+    setFormDate(row.revenue_date);
+    setFormAmount(String(row.amount ?? ''));
+    setFormNote(row.note ?? '');
+    setFormError('');
+  };
+
+  const handleSaveDaily = async () => {
+    setFormError('');
+    if (!formDate) {
+      setFormError('Vui lòng chọn ngày.');
+      return;
+    }
+    if (rangeValid && (formDate < from || formDate > to)) {
+      setFormError('Ngày nằm ngoài khoảng đang lọc. Hãy đổi ngày hoặc chỉnh khoảng lọc.');
+      return;
+    }
+    const amount = Number(formAmount);
+    if (!Number.isFinite(amount) || amount < 0) {
+      setFormError('Số tiền không hợp lệ.');
+      return;
+    }
+    setSavingDaily(true);
+    try {
+      if (editingId) {
+        await dailyRevenueService.update(editingId, {
+          revenue_date: formDate,
+          amount,
+          note: formNote || null,
+        });
+        showToast('Đã cập nhật doanh thu.');
+      } else {
+        await dailyRevenueService.upsert({
+          revenue_date: formDate,
+          amount,
+          note: formNote || null,
+        });
+        showToast('Đã lưu doanh thu.');
+      }
+      resetDailyForm();
+      await fetchDaily();
+    } catch (err) {
+      setFormError(getErrorMessage(err, 'Không thể lưu doanh thu.'));
+    } finally {
+      setSavingDaily(false);
+    }
+  };
+
+  const handleDeleteDaily = async (row) => {
+    if (!window.confirm(`Xoá doanh thu ngày ${row.revenue_date}?`)) return;
+    try {
+      await dailyRevenueService.remove(row.id);
+      showToast('Đã xoá doanh thu.');
+      if (editingId === row.id) resetDailyForm();
+      await fetchDaily();
+    } catch (err) {
+      showToast(getErrorMessage(err, 'Không thể xoá doanh thu.'), 'error');
+    }
+  };
+
+  const dailyTotal = dailyRows.reduce(
+    (sum, r) => sum + (Number(r.amount) || 0),
+    0,
+  );
+
+  const formatDayLabel = (value) => {
+    if (!value || typeof value !== 'string') return '—';
+    const [y, m, d] = value.split('-');
+    return y && m && d ? `${d}/${m}/${y}` : value;
+  };
+
+  const dailyColumns = [
+    {
+      key: 'revenue_date',
+      label: 'Ngày',
+      render: (v) => formatDayLabel(v),
+    },
+    {
+      key: 'amount',
+      label: 'Số tiền',
+      render: (v) => formatCurrency(v),
+    },
+    {
+      key: 'note',
+      label: 'Ghi chú',
+      render: (v) => v || '—',
+    },
+    ...(canEditDaily
+      ? [
+          {
+            key: 'actions',
+            label: 'Thao tác',
+            render: (_v, row) => (
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => startEditDaily(row)}
+                >
+                  Sửa
+                </Button>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  onClick={() => handleDeleteDaily(row)}
+                >
+                  Xoá
+                </Button>
+              </div>
+            ),
+          },
+        ]
+      : []),
+  ];
+
   const presets = useMemo(
     () => [
       {
@@ -157,7 +317,7 @@ export default function Reports() {
   };
 
   const revenueChart = revenueSeries.map((s) => ({
-    label: formatMonthLabel(s.period),
+    label: formatMonthLabel(s.month ?? s.period),
     value: Number(s.revenue) || 0,
   }));
 
@@ -168,7 +328,7 @@ export default function Reports() {
 
   const revenueColumns = [
     {
-      key: 'period',
+      key: 'month',
       label: 'Tháng',
       render: (v) => formatMonthLabel(v) || '—',
     },
@@ -185,7 +345,7 @@ export default function Reports() {
       return;
     }
     const rows = revenueSeries.map((s) => [
-      formatMonthLabel(s.period),
+      formatMonthLabel(s.month ?? s.period),
       Number(s.revenue) || 0,
     ]);
     exportCSV('bao-cao-doanh-thu', ['Tháng', 'Doanh thu'], rows);
@@ -434,6 +594,137 @@ export default function Reports() {
             emptyText="Không có dữ liệu doanh thu"
             rowKey="period"
           />
+        </div>
+      )}
+
+      {activeTab === 'daily' && (
+        <div className="space-y-4">
+          <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+            <h2 className="mb-3 text-lg font-semibold text-gray-800">
+              {editingId ? 'Sửa doanh thu ngày' : 'Nhập doanh thu ngày'}
+            </h2>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
+              <div>
+                <Input
+                  label="Ngày"
+                  name="revenue_date"
+                  type="date"
+                  value={formDate}
+                  max={toISODate(new Date())}
+                  onChange={(e) => setFormDate(e.target.value)}
+                />
+              </div>
+              <div>
+                <Input
+                  label="Số tiền (đ)"
+                  name="amount"
+                  type="number"
+                  min="0"
+                  step="1000"
+                  placeholder="VD: 1500000"
+                  value={formAmount}
+                  onChange={(e) => setFormAmount(e.target.value)}
+                />
+              </div>
+              <div>
+                <Input
+                  label="Ghi chú"
+                  name="note"
+                  placeholder="VD: Chụp sự kiện công ty"
+                  value={formNote}
+                  onChange={(e) => setFormNote(e.target.value)}
+                />
+              </div>
+              <div className="flex items-end gap-2">
+                <Button
+                  onClick={handleSaveDaily}
+                  loading={savingDaily}
+                  disabled={!canEditDaily}
+                >
+                  {editingId ? 'Lưu thay đổi' : 'Lưu'}
+                </Button>
+                {editingId && (
+                  <Button variant="secondary" onClick={resetDailyForm}>
+                    Huỷ
+                  </Button>
+                )}
+              </div>
+            </div>
+            {formError && (
+              <p className="mt-2 text-xs text-red-600">{formError}</p>
+            )}
+            {!canEditDaily && (
+              <p className="mt-2 text-xs text-amber-600">
+                Chỉ quản trị viên/quản lý mới được nhập doanh thu.
+              </p>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <StatCard
+              title="Tổng doanh thu nhập tay (kỳ)"
+              value={formatCurrency(dailyTotal)}
+              icon={<span aria-hidden="true">💰</span>}
+              variant="success"
+            />
+            <StatCard
+              title="Số ngày ghi nhận"
+              value={dailyRows.length}
+              icon={<span aria-hidden="true">📅</span>}
+              variant="info"
+            />
+          </div>
+
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-gray-800">
+              Doanh thu theo ngày
+            </h2>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                if (!dailyRows.length) {
+                  showToast('Không có dữ liệu để xuất.', 'warning');
+                  return;
+                }
+                const rows = dailyRows.map((r) => [
+                  formatDayLabel(r.revenue_date),
+                  Number(r.amount) || 0,
+                  r.note ?? '',
+                ]);
+                exportCSV(
+                  'doanh-thu-ngay',
+                  ['Ngày', 'Số tiền', 'Ghi chú'],
+                  rows,
+                );
+                showToast('Đã xuất CSV doanh thu ngày.');
+              }}
+              disabled={dailyLoading || !dailyRows.length}
+            >
+              Xuất CSV
+            </Button>
+          </div>
+
+          {dailyError ? (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              {dailyError}
+              <button
+                type="button"
+                onClick={fetchDaily}
+                className="ml-2 underline hover:text-red-800"
+              >
+                Thử lại
+              </button>
+            </div>
+          ) : (
+            <Table
+              columns={dailyColumns}
+              data={dailyRows}
+              loading={dailyLoading}
+              emptyText="Chưa có doanh thu nhập tay nào"
+              rowKey="id"
+            />
+          )}
         </div>
       )}
 

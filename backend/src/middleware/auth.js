@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const supabase = require('../config/supabase');
+const authClient = require('../config/authClient');
 const env = require('../config/env');
 const AppError = require('../utils/AppError');
 const asyncHandler = require('../utils/asyncHandler');
@@ -35,7 +36,7 @@ const auth = asyncHandler(async (req, _res, next) => {
     }
   }
 
-  const { data, error } = await supabase.auth.getUser(token);
+  const { data, error } = await authClient.auth.getUser(token);
   if (error || !data?.user) {
     try {
       const payload = jwt.verify(token, env.JWT_SECRET);

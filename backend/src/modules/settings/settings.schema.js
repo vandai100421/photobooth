@@ -14,6 +14,7 @@ const updateSettingsSchema = {
     .object({
       settings: z.record(z.string(), z.string()).optional(),
     })
+    .passthrough()
     .superRefine((data, ctx) => {
       const hasFlat = Object.keys(data).some(
         (k) => k !== 'settings' && typeof data[k] === 'string',

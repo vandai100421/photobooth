@@ -366,7 +366,7 @@ export const TEMPLATE_VARIABLES = [
 export const TEMPLATE_SAMPLE_VARS = {
   customer_name: 'Nguyễn Văn A',
   voucher_code: 'TAP-DEMO01',
-  shop_name: 'TAP Photobooth',
+  shop_name: 'THE TAP',
   year: '2026',
 };
 

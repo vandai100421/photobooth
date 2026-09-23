@@ -68,7 +68,7 @@ export default function Login() {
     <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-brand-600 via-brand-500 to-indigo-700 p-4">
       <div className="w-full max-w-md">
         <div className="mb-6 text-center">
-          <h1 className="text-3xl font-bold text-white">TAP Photobooth</h1>
+          <h1 className="text-3xl font-bold text-white">THE TAP</h1>
           <p className="mt-1 text-sm text-brand-100">
             Hệ thống quản lý photobooth
           </p>
@@ -118,7 +118,7 @@ export default function Login() {
         </div>
 
         <p className="mt-6 text-center text-xs text-brand-100">
-          © {new Date().getFullYear()} TAP Photobooth. All rights reserved.
+          © {new Date().getFullYear()} THE TAP. All rights reserved.
         </p>
       </div>
     </div>

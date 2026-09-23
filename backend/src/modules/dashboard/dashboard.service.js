@@ -90,6 +90,25 @@ const assertOk = (result, label) => {
 const sumAmount = (rows) =>
   (rows || []).reduce((acc, r) => acc + Number(r.amount || 0), 0);
 
+// Doanh thu nhập tay (daily_revenue). Nếu bảng chưa được tạo (migration
+// chưa chạy) thì coi như không có dữ liệu thay vì làm sập dashboard.
+const normalizeDailyRevenue = (res) => {
+  if (res.error) {
+    if (
+      res.error.code === 'PGRST205' ||
+      res.error.code === '42P01' ||
+      /does not exist/i.test(res.error.message || '')
+    ) {
+      return [];
+    }
+    throw new AppError(
+      `Failed to fetch daily revenue: ${res.error.message}`,
+      500,
+    );
+  }
+  return res.data || [];
+};
+
 const getStats = async () => {
   const todayStart = startOfTodayISO();
   const todayEnd = endOfTodayISO();
@@ -105,6 +124,7 @@ const getStats = async () => {
     vouchersUsedTodayRes,
     vouchersActiveRes,
     completedBookingsRes,
+    dailyRevenueRes,
     messagesTodayRes,
     birthdaysRes,
   ] = await Promise.all([
@@ -143,6 +163,9 @@ const getStats = async () => {
       .select('booking_date, amount')
       .eq('status', 'completed'),
     supabase
+      .from('daily_revenue')
+      .select('revenue_date, amount'),
+    supabase
       .from('message_logs')
       .select('id', { count: 'exact', head: true })
       .in('status', ['sent', 'delivered'])
@@ -166,13 +189,32 @@ const getStats = async () => {
   assertOk(birthdaysRes, 'birthdays');
 
   const completed = completedBookingsRes.data || [];
+  const dailyRows = normalizeDailyRevenue(dailyRevenueRes);
+  // Lấy YYYY-MM-DD / YYYY-MM từ thời gian CỤC BỘ (không dùng .slice() của ISO
+  // đã đổi qua UTC — khi múi giờ +07 sẽ lệch về ngày hôm trước).
+  const now = new Date();
+  const todayStr = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
+  const monthStr = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}`;
+
+  const dailyToday = sumAmount(
+    dailyRows.filter(
+      (r) => typeof r.revenue_date === 'string' && r.revenue_date.slice(0, 10) === todayStr,
+    ),
+  );
+  const dailyMonth = sumAmount(
+    dailyRows.filter(
+      (r) => typeof r.revenue_date === 'string' && r.revenue_date.slice(0, 7) === monthStr,
+    ),
+  );
+  const dailyTotal = sumAmount(dailyRows);
+
   const revenueToday = sumAmount(
     completed.filter((b) => inRange(b.booking_date, todayStart, todayEnd)),
-  );
+  ) + dailyToday;
   const revenueMonth = sumAmount(
     completed.filter((b) => inRange(b.booking_date, monthStart, monthEnd)),
-  );
-  const revenueTotal = sumAmount(completed);
+  ) + dailyMonth;
+  const revenueTotal = sumAmount(completed) + dailyTotal;
 
   const birthdaysToday = (birthdaysRes.data || []).filter(
     (c) => c.birthday && c.birthday.slice(5, 10) === todayMD,
@@ -198,20 +240,37 @@ const getRevenue = async ({ from, to }) => {
   const startISO = dateToStartISO(from);
   const endISO = dateToEndISO(to);
 
-  const { data, error } = await supabase
-    .from('bookings')
-    .select('booking_date, amount')
-    .eq('status', 'completed')
-    .gte('booking_date', startISO)
-    .lte('booking_date', endISO)
-    .order('booking_date', { ascending: true });
+  const [bookingsRes, dailyRes] = await Promise.all([
+    supabase
+      .from('bookings')
+      .select('booking_date, amount')
+      .eq('status', 'completed')
+      .gte('booking_date', startISO)
+      .lte('booking_date', endISO)
+      .order('booking_date', { ascending: true }),
+    supabase
+      .from('daily_revenue')
+      .select('revenue_date, amount')
+      .gte('revenue_date', from)
+      .lte('revenue_date', to),
+  ]);
 
-  if (error) {
-    throw new AppError(`Failed to fetch revenue: ${error.message}`, 500);
+  if (bookingsRes.error) {
+    throw new AppError(`Failed to fetch revenue: ${bookingsRes.error.message}`, 500);
   }
 
+  const dailyRows = normalizeDailyRevenue(dailyRes);
+  const dailyBuckets = new Map();
+  dailyRows.forEach((r) => {
+    const key = (r.revenue_date || '').slice(0, 7);
+    if (!key || !/^\d{4}-\d{2}$/.test(key)) return;
+    const entry = dailyBuckets.get(key) || { revenue: 0 };
+    entry.revenue += Number(r.amount || 0);
+    dailyBuckets.set(key, entry);
+  });
+
   const buckets = new Map();
-  (data || []).forEach((b) => {
+  (bookingsRes.data || []).forEach((b) => {
     const key = monthKey(b.booking_date);
     if (!key) return;
     const entry = buckets.get(key) || { month: key, revenue: 0, bookings_count: 0 };
@@ -220,9 +279,13 @@ const getRevenue = async ({ from, to }) => {
     buckets.set(key, entry);
   });
 
-  return enumerateMonths(from, to).map(
-    (m) => buckets.get(m) || { month: m, revenue: 0, bookings_count: 0 },
-  );
+  return enumerateMonths(from, to).map((m) => {
+    const base = buckets.get(m) || { month: m, revenue: 0, bookings_count: 0 };
+    const daily = dailyBuckets.get(m);
+    return daily
+      ? { ...base, revenue: base.revenue + daily.revenue }
+      : base;
+  });
 };
 
 const getCustomers = async ({ from, to }) => {

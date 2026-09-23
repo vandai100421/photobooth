@@ -25,7 +25,7 @@ export default function Sidebar({ open, onClose }) {
       >
         <div className="flex h-16 items-center border-b border-gray-200 px-4">
           <span className="text-lg font-bold text-brand-600">
-            TAP Photobooth
+            THE TAP
           </span>
         </div>
         <nav className="flex flex-col gap-1 p-3">

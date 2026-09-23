@@ -1,7 +1,7 @@
-# Hướng dẫn sử dụng — TAP Photobooth Management
+# Hướng dẫn sử dụng — THE TAP Management
 
 Tài liệu dành cho nhân viên/quản lý quán photobooth. Hướng dẫn từng thao tác trên
-hệ thống quản lý **TAP Photobooth**.
+hệ thống quản lý **THE TAP**.
 
 > Mọi ảnh chụp màn hình trong tài liệu được đánh dấu `[(screenshot)]`. Khi hệ
 > thống chạy thật, thay bằng ảnh chụp thực tế để nhân viên dễ làm quen.

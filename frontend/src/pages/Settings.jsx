@@ -317,7 +317,7 @@ export default function Settings() {
               name="shop_name"
               value={form.shop_name}
               onChange={handleChange}
-              placeholder="TAP Photobooth"
+              placeholder="THE TAP"
               disabled={!isAdmin}
             />
           </Section>
