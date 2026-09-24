@@ -93,14 +93,17 @@ Còn chờ **credentials/thao tác thủ công bên ngoài** (Zalo OA, Gmail, Cl
 - [ ] Sửa `backend/.env` thêm `CLOUDINARY_URL=cloudinary://api_key:api_secret@cloud_name`
 - [ ] Test upload ảnh (POST /upload)
 
-### 4. Deploy production
-- [ ] Tạo account Vercel + Railway/Render
-- [ ] Deploy Frontend → Vercel (vercel.json đã sẵn sàng)
-- [ ] Deploy Backend → Railway/Render (Dockerfile + railway.json đã sẵn sàng)
-- [ ] Setup production env vars (.env.example đã sẵn sàng)
-- [ ] Setup Supabase production + RLS (schema.sql đã sẵn sàng)
+### 4. Deploy production ✅ (đã deploy)
+- [x] Deploy Frontend → Vercel: https://tap-photobooth.vercel.app
+- [x] Deploy Backend → Vercel Serverless: https://ptb-api-navy.vercel.app
+  - Đổi từ Railway/Render sang Vercel Serverless (free, không cần thẻ, không ngủ)
+  - Serverless entry: `backend/api/index.js` + `backend/vercel.json` (rewrites + crons)
+  - Vercel Cron `0 1 * * *` (8:00 VN) gọi `/api/v1/cron/daily` (bảo vệ bằng CRON_SECRET)
+- [x] Setup production env vars qua Vercel CLI (Supabase, JWT_SECRET, CRON_SECRET, FRONTEND_URL, MESSAGE_DRY_RUN=true, VITE_API_URL)
+- [ ] Setup Supabase production riêng + RLS (đang dùng chung project dev)
 - [ ] Setup monitoring (Sentry)
-- [ ] Test production
+- [x] Test production: /health ✅, CORS ✅, login ✅, cron dry-run ✅
+- [ ] Bổ sung Zalo OA + Gmail SMTP + Cloudinary thật → update env vars trên Vercel → redeploy
 
 ---
 

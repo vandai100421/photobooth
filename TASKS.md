@@ -118,13 +118,14 @@
 - [x] Test UI/UX full flow
 
 ### Tuần 12: Deploy + Go-Live
-- [ ] Deploy Frontend → Vercel  ← cần user làm thủ công (vercel.json sẵn sàng)
-- [ ] Deploy Backend → Railway/Render  ← cần user làm thủ công (Dockerfile + railway.json sẵn sàng)
-- [ ] Setup production env vars  ← cần user làm thủ công (.env.example sẵn sàng)
-- [ ] Setup Supabase production + RLS  ← cần user làm thủ công (schema.sql sẵn sàng)
+- [x] Deploy Frontend → Vercel (https://tap-photobooth.vercel.app)
+- [x] Deploy Backend → Vercel Serverless (https://ptb-api-navy.vercel.app) — đổi từ Railway/Render sang Vercel Serverless (free, không ngủ); cron node-cron thay bằng Vercel Cron + endpoint `/api/v1/cron/daily` (CRON_SECRET)
+- [x] Setup production env vars (Vercel: Supabase, JWT_SECRET, CRON_SECRET, FRONTEND_URL, VITE_API_URL, MESSAGE_DRY_RUN=true)
+- [ ] Setup Supabase production + RLS  ← đang dùng chung Supabase project dev; tách production DB khi go-live thật
 - [ ] Setup monitoring (Sentry)  ← cần user làm thủ công
-- [ ] Test production
+- [x] Test production (health, CORS, login, cron dry-run)
 - [x] Viết tài liệu HDSD (docs/USER_GUIDE.md)
+- [ ] Bổ sung Zalo OA + Gmail + Cloudinary thật rồi update env vars (hiện MESSAGE_DRY_RUN=true)
 - [ ] Training nhân viên
 - [ ] Go-live
 

@@ -81,4 +81,6 @@ const stopScheduler = () => {
   logger.info('Cron scheduler stopped');
 };
 
-module.exports = { initScheduler, stopScheduler };
+// Exported so the HTTP cron endpoint (src/modules/cron) can trigger all
+// jobs on Vercel serverless, where node-cron cannot run.
+module.exports = { initScheduler, stopScheduler, runAllJobs };

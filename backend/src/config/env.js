@@ -24,6 +24,10 @@ const envSchema = z.object({
   GMAIL_APP_PASSWORD: z.string().optional(),
 
   MESSAGE_DRY_RUN: z.coerce.boolean().default(false),
+
+  // Secret used to protect /api/v1/cron/daily. On Vercel it doubles as the
+  // bearer token Vercel Cron attaches automatically (CRON_SECRET convention).
+  CRON_SECRET: z.string().min(16).optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);
