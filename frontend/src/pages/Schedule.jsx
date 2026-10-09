@@ -76,24 +76,82 @@ const DEFAULT_WEEKEND_SHIFTS = [
   { name: 'Tối', start: '17:30', end: '23:00' },
 ];
 
-// Timeline trục ngang: 7h → 23h (cover cả ca weekday 9–22 và weekend 7–23).
-const TL_START = 7;
-const TL_END = 23;
-const TL_SPAN = TL_END - TL_START;
-const TIMELINE_HOURS = Array.from(
-  { length: TL_SPAN + 1 },
-  (_, i) => TL_START + i,
-);
-const hourLeftPct = (h) => ((h - TL_START) / TL_SPAN) * 100;
+// Ca đan xen nhau (A 01–09, B 05–12) được xếp vào các lane riêng nên vẫn
+// nhìn thấy + bấm được từng ca.
+const COMPACT_LANE_THRESHOLD = 4;
+const LANE_HEIGHT = 34;
+const COMPACT_LANE_HEIGHT = 24;
+const LANE_GAP = 4;
+const TRACK_PAD_Y = 8;
+const EMPTY_TRACK_HEIGHT = 44;
+const MIN_BLOCK_WIDTH_PX = 86;
 
-// Lấy giờ VN (UTC+7) từ ISO string. API trả về UTC nên phải cộng +7.
-const vnHourOf = (isoStr) => {
+// Mốc giờ Việt Nam (UTC+7). API trả về UTC nên phải cộng bù.
+const VN_OFFSET_MIN = 7 * 60;
+
+// Số phút tính từ 00:00 của ngày theo giờ VN.
+const vnMinutesOfDay = (isoStr) => {
   if (!isoStr) return 0;
   const d = new Date(isoStr);
-  const h = (d.getUTCHours() + 7) % 24;
-  const m = d.getUTCMinutes();
-  return h + m / 60;
+  if (Number.isNaN(d.getTime())) return 0;
+  return (d.getUTCHours() * 60 + d.getUTCMinutes() + VN_OFFSET_MIN) % 1440;
 };
+
+// Quy đổi ca về giờ VN tuyệt đối. Ca qua nửa đêm (22:00 → 02:00) được
+// đẩy sang +24h để vẫn nằm đúng sau ca trước đó trên trục.
+const shiftSpan = (s) => {
+  const start = vnMinutesOfDay(s.start_time) / 60;
+  let end = vnMinutesOfDay(s.end_time) / 60;
+  if (end <= start) end += 24;
+  return { start, end };
+};
+
+// Chia các ca của một ngày vào nhiều lane sao cho ca này không đè ca khác.
+// Mỗi ca được đặt vào lane có sẵn "trống" sớm nhất.
+const packLanes = (list) => {
+  const items = list
+    .map((s) => ({ shift: s, ...shiftSpan(s) }))
+    .sort((a, b) => a.start - b.start || a.end - b.end);
+
+  const laneEnds = [];
+  const packed = items.map((it) => {
+    let lane = -1;
+    let bestEnd = Infinity;
+    laneEnds.forEach((laneEnd, i) => {
+      if (laneEnd <= it.start && laneEnd < bestEnd) {
+        bestEnd = laneEnd;
+        lane = i;
+      }
+    });
+    if (lane === -1) {
+      lane = laneEnds.length;
+      laneEnds.push(it.end);
+    } else {
+      laneEnds[lane] = it.end;
+    }
+    return { ...it, lane };
+  });
+
+  return { items: packed, laneCount: Math.max(laneEnds.length, 1) };
+};
+
+// Đọc chuỗi datetime-local (giờ VN do người dùng gõ) thành ngày + số phút.
+const parseVnLocal = (value) => {
+  const m = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})/.exec(value || '');
+  if (!m) return null;
+  return { day: m[1], minutes: Number(m[2]) * 60 + Number(m[3]) };
+};
+
+// Nhiều ca chồng nhau cùng lúc → rút gọn chiều cao lane cho khỏi quá cao.
+const laneHeightOf = (laneCount) =>
+  laneCount > COMPACT_LANE_THRESHOLD ? COMPACT_LANE_HEIGHT : LANE_HEIGHT;
+
+const laneTrackHeight = (laneCount) =>
+  laneCount > 0
+    ? TRACK_PAD_Y * 2 +
+      laneCount * laneHeightOf(laneCount) +
+      (laneCount - 1) * LANE_GAP
+    : EMPTY_TRACK_HEIGHT;
 
 // Chuyển ISO (UTC) → chuỗi datetime-local theo giờ VN (UTC+7) ổn định,
 // không phụ thuộc timezone trình duyệt.
@@ -113,7 +171,7 @@ const shiftColorClass = (s) => {
   if (n.includes('sáng') || n.includes('sang')) return 'bg-blue-500';
   if (n.includes('chiều') || n.includes('chieu')) return 'bg-green-500';
   if (n.includes('tối') || n.includes('toi')) return 'bg-purple-500';
-  const h = vnHourOf(s.start_time);
+  const h = shiftSpan(s).start % 24;
   if (h < 12) return 'bg-blue-500';
   if (h < 17.5) return 'bg-green-500';
   return 'bg-purple-500';
@@ -243,16 +301,87 @@ export default function Schedule() {
 
   const shiftsByDay = useMemo(() => {
     const map = new Map();
-    weekDays.forEach((d) => map.set(toISODate(d), []));
+    weekDays.forEach((d) =>
+      map.set(toISODate(d), { items: [], laneCount: 0 }),
+    );
     (shifts || []).forEach((s) => {
       const key = (s.date || '').slice(0, 10);
-      if (map.has(key)) map.get(key).push(s);
+      const entry = map.get(key);
+      if (entry) entry.items.push(s);
     });
-    map.forEach((list) =>
-      list.sort((a, b) => new Date(a.start_time) - new Date(b.start_time)),
-    );
+    map.forEach((entry) => {
+      const packed = packLanes(entry.items);
+      entry.items = packed.items;
+      entry.laneCount = packed.laneCount;
+    });
     return map;
   }, [shifts, weekDays]);
+
+  // Trục giờ co giãn theo ca thực tế trong tuần (mặc định 7h → 23h) để ca
+  // ngoài khung giờ cố định (vd 01:00, ca qua nửa đêm) vẫn hiển thị đúng.
+  const timeline = useMemo(() => {
+    let minHour = 7;
+    let maxHour = 23;
+    (shifts || []).forEach((s) => {
+      const { start, end } = shiftSpan(s);
+      minHour = Math.min(minHour, start);
+      maxHour = Math.max(maxHour, end);
+    });
+    const start = Math.max(0, Math.floor(minHour));
+    const end = Math.min(24, Math.max(Math.ceil(maxHour), start + 1));
+    return { start, end, span: end - start };
+  }, [shifts]);
+
+  const hourLeftPct = useCallback(
+    (h) => ((h - timeline.start) / timeline.span) * 100,
+    [timeline],
+  );
+
+  const timelineHours = useMemo(() => {
+    const out = [];
+    for (let h = timeline.start; h <= timeline.end; h += 1) out.push(h);
+    return out;
+  }, [timeline]);
+
+  // Ca trùng giờ của cùng một nhân viên → cảnh báo (đan xen giữa NV khác vẫn OK).
+  const sameEmployeeConflicts = useMemo(() => {
+    const set = new Set();
+    shiftsByDay.forEach((entry) => {
+      entry.items.forEach((a, i) => {
+        entry.items.forEach((b, j) => {
+          if (i >= j) return;
+          if (a.shift.employee_id !== b.shift.employee_id) return;
+          if (a.start < b.end && b.start < a.end) {
+            set.add(a.shift.id);
+            set.add(b.shift.id);
+          }
+        });
+      });
+    });
+    return set;
+  }, [shiftsByDay]);
+
+  // Cảnh báo khi ca đang soạn trùng giờ với một ca khác của CÙNG nhân viên.
+  // Đan xen giờ giữa 2 nhân viên khác nhau vẫn hợp lệ nên không cảnh báo.
+  const shiftFormOverlap = useMemo(() => {
+    if (!shiftForm.employee_id) return null;
+    const st = parseVnLocal(shiftForm.start_time);
+    const en = parseVnLocal(shiftForm.end_time);
+    if (!st || !en) return null;
+    const start = st.minutes;
+    let end = en.minutes;
+    if (en.day !== st.day || end <= start) end += 1440;
+    const entry = shiftsByDay.get(st.day);
+    if (!entry) return null;
+    const hit = entry.items.find(
+      (it) =>
+        it.shift.id !== editingShift?.id &&
+        it.shift.employee_id === shiftForm.employee_id &&
+        start < it.end * 60 &&
+        it.start * 60 < end,
+    );
+    return hit ? formatTimeRange(hit.shift) : null;
+  }, [shiftForm, shiftsByDay, editingShift]);
 
   const employeeOptions = useMemo(
     () => [
@@ -400,16 +529,15 @@ export default function Schedule() {
       showToast('Chọn nhân viên trước.', 'error');
       return;
     }
-    if (!form.start || !form.end) {
-      showToast('Nhập đủ giờ bắt đầu và kết thúc.', 'error');
+if (!form.start || !form.end || form.start === form.end) {
+      showToast('Nhập đủ giờ bắt đầu và kết thúc (khác nhau).', 'error');
       return;
     }
-    if (form.start >= form.end) {
-      showToast('Giờ kết thúc phải sau giờ bắt đầu.', 'error');
-      return;
-    }
-    const startISO = combineDateTimeISO(dateStr, form.start);
-    const endISO = combineDateTimeISO(dateStr, form.end);
+    const [startISO, endISO] = buildShiftRangeISO(
+      dateStr,
+      form.start,
+      form.end,
+    );
     setQuickAddBusy(dateStr);
     try {
       await scheduleService.createShift({
@@ -475,12 +603,17 @@ export default function Schedule() {
         for (const sh of shifts) {
           const empId = bulkAssignees[rotator % bulkAssignees.length];
           rotator += 1;
+          const [startISO, endISO] = buildShiftRangeISO(
+            dateStr,
+            sh.start,
+            sh.end,
+          );
           try {
             await scheduleService.createShift({
               employee_id: empId,
               date: dateStr,
-              start_time: combineDateTimeISO(dateStr, sh.start),
-              end_time: combineDateTimeISO(dateStr, sh.end),
+              start_time: startISO,
+              end_time: endISO,
               notes: `Ca ${sh.name}`,
             });
             created += 1;
@@ -735,7 +868,7 @@ export default function Schedule() {
                 Ngày
               </div>
               <div className="relative h-7 flex-1">
-                {TIMELINE_HOURS.map((h) => (
+                {timelineHours.map((h) => (
                   <div
                     key={h}
                     style={{ left: `${hourLeftPct(h)}%` }}
@@ -754,7 +887,9 @@ export default function Schedule() {
             {/* Hàng = mỗi ngày trong tuần */}
             {weekDays.map((day, idx) => {
               const key = toISODate(day);
-              const list = shiftsByDay.get(key) || [];
+              const dayEntry = shiftsByDay.get(key);
+              const items = dayEntry?.items ?? [];
+              const laneCount = dayEntry?.laneCount ?? 0;
               const isExpanded = expandedDay === key;
               const isWeekend = idx === 5 || idx === 6;
               return (
@@ -788,48 +923,60 @@ export default function Schedule() {
                       )}
                     </div>
 
-                    {/* Track timeline */}
-                    <div className="relative h-16 flex-1">
-                      {TIMELINE_HOURS.map((h) => (
+                    {/* Track timeline — mỗi lane là 1 hàng, ca chồng giờ xếp chồng dọc */}
+                    <div
+                      className="relative flex-1"
+                      style={{ height: laneTrackHeight(laneCount) }}
+                    >
+                      {timelineHours.map((h) => (
                         <div
                           key={h}
                           style={{ left: `${hourLeftPct(h)}%` }}
                           className="absolute top-0 bottom-0 border-l border-gray-50"
                         />
                       ))}
-                      {list.map((s) => {
-                        const sh = vnHourOf(s.start_time);
-                        const eh = vnHourOf(s.end_time);
-                        const left = Math.max(
-                          0,
-                          ((sh - TL_START) / TL_SPAN) * 100,
-                        );
-                        const width = Math.min(
-                          100 - left,
-                          ((eh - sh) / TL_SPAN) * 100,
-                        );
+                      {items.map((it) => {
+                        const s = it.shift;
+                        const left = Math.max(0, hourLeftPct(it.start));
+                        const right = Math.min(100, hourLeftPct(it.end));
+                        const width = Math.max(0, right - left);
+                        const conflict = sameEmployeeConflicts.has(s.id);
+                        const laneHeight = laneHeightOf(laneCount);
+                        const compact = laneHeight === COMPACT_LANE_HEIGHT;
                         return (
                           <div
                             key={s.id}
-                            style={{ left: `${left}%`, width: `${width}%` }}
-                            className={`absolute top-1.5 bottom-1.5 cursor-pointer overflow-hidden rounded-md px-1.5 py-0.5 text-[11px] text-white transition hover:opacity-90 ${shiftColorClass(
+                            style={{
+                              left: `${left}%`,
+                              width: `${width}%`,
+                              minWidth: `${MIN_BLOCK_WIDTH_PX}px`,
+                              top: `${TRACK_PAD_Y + it.lane * (laneHeight + LANE_GAP)}px`,
+                              height: `${laneHeight}px`,
+                            }}
+                            className={`absolute cursor-pointer overflow-hidden rounded-md px-1.5 py-0.5 text-[11px] text-white transition hover:opacity-90 ${shiftColorClass(
                               s,
-                            )}`}
+                            )} ${conflict ? 'ring-2 ring-red-400' : ''}`}
                             onClick={() => openEditShift(s)}
                             title={`${formatTimeRange(s)} • ${
                               s.employee?.full_name ?? ''
-                            }${s.location?.name ? ' • ' + s.location.name : ''}`}
+                            }${s.location?.name ? ' • ' + s.location.name : ''}${
+                              conflict
+                                ? '\n⚠ Trùng giờ với ca khác của cùng nhân viên'
+                                : ''
+                            }`}
                           >
                             <div className="font-semibold leading-tight">
                               {formatTimeRange(s)}
                             </div>
-                            <div className="truncate leading-tight opacity-90">
-                              {s.employee?.full_name ?? '—'}
-                            </div>
+                            {!compact && (
+                              <div className="truncate leading-tight opacity-90">
+                                {s.employee?.full_name ?? '—'}
+                              </div>
+                            )}
                           </div>
                         );
                       })}
-                      {list.length === 0 && (
+                      {items.length === 0 && (
                         <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-gray-300">
                           Trống
                         </span>
@@ -925,6 +1072,12 @@ export default function Schedule() {
         {shiftFormError && (
           <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
             {shiftFormError}
+          </div>
+        )}
+        {shiftFormOverlap && (
+          <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            ⚠ Nhân viên này đã có ca {shiftFormOverlap} trùng giờ. Vẫn có thể
+            lưu nếu cần.
           </div>
         )}
         <form
@@ -1439,9 +1592,27 @@ function formatShort(d) {
 }
 
 // Kết hợp date (YYYY-MM-DD) + time (HH:MM) → ISO với offset +07:00 (giờ VN).
-function combineDateTimeISO(dateStr, hhmm) {
+function combineDateTimeISO(dateStr, hhmm, dayOffset = 0) {
   const [y, m, d] = dateStr.split('-').map(Number);
   const [hh, mm] = hhmm.split(':').map(Number);
   const pad = (n) => String(n).padStart(2, '0');
-  return `${y}-${pad(m)}-${pad(d)}T${pad(hh)}:${pad(mm)}:00+07:00`;
+  const base = new Date(Date.UTC(y, m - 1, d + dayOffset));
+  base.setUTCHours(hh, mm, 0, 0);
+  return `${base.getUTCFullYear()}-${pad(base.getUTCMonth() + 1)}-${pad(
+    base.getUTCDate(),
+  )}T${pad(base.getUTCHours())}:${pad(base.getUTCMinutes())}:00+07:00`;
+}
+
+// Tạo cặp [start, end] cho một ca. Giờ kết thúc <= giờ bắt đầu được hiểu là
+// ca qua nửa đêm (vd 22:00 → 02:00) nên end dồn sang ngày kế tiếp.
+function buildShiftRangeISO(dateStr, startHHMM, endHHMM) {
+  const toMin = (t) => {
+    const [h, m] = t.split(':').map(Number);
+    return h * 60 + m;
+  };
+  const rollover = toMin(endHHMM) < toMin(startHHMM) ? 1 : 0;
+  return [
+    combineDateTimeISO(dateStr, startHHMM),
+    combineDateTimeISO(dateStr, endHHMM, rollover),
+  ];
 }

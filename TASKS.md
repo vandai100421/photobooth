@@ -167,3 +167,27 @@
 ### Còn lại
 - [ ] Chạy migration `schema_hr.sql` lên Supabase production (cần user làm thủ công)
 - [ ] Test thực tế flow: tạo ca → auto-assign → chốt KPI/thưởng cuối tháng
+
+---
+
+## Mở rộng — Thưởng bài viết + thưởng/phạt thủ công
+
+> Migration: `docs/schema_hr_v2.sql` (chạy sau `docs/schema_hr.sql`).
+
+### Database
+- [x] Bảng `employee_adjustments` (thưởng/phạt tay của admin, gắn `period_month` + `feedback_id`)
+- [x] Index + trigger `updated_at` + RLS (chỉ admin ghi)
+- [x] Seed 3 quy tắc: `post_published`, `good_feedback`, `bad_feedback`
+
+### Backend API
+- [x] `computeKpi` cộng: bài viết đã đăng, feedback ≥4★ (thưởng), feedback ≤2★ (phạt), các khoản thưởng/phạt tay
+- [x] `GET/POST/DELETE /rewards/adjustments` (admin/manager xem, admin thêm/xoá)
+- [x] Tương thích ngược: bảng `employee_adjustments` chưa migrate thì KPI vẫn chạy bình thường
+
+### Frontend UI
+- [x] Tab "Thưởng / Phạt": danh sách khoản thưởng/phạt + modal thêm (có gắn feedback KH)
+- [x] KPI: thêm metric bài viết đăng, feedback tốt/kém, tổng điều chỉnh
+- [x] Bảng xếp hạng: thêm cột bài viết + điều chỉnh
+
+### Còn lại
+- [ ] Chạy migration `schema_hr_v2.sql` lên Supabase (cần user làm thủ công)

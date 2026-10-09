@@ -21,6 +21,15 @@ export const rewardsService = {
   updatePayout: (id, data) =>
     api.put(`/rewards/payouts/${id}`, data).then((r) => r.data),
 
+  listAdjustments: (params) =>
+    api.get('/rewards/adjustments', { params }).then((r) => r.data),
+
+  createAdjustment: (data) =>
+    api.post('/rewards/adjustments', data).then((r) => r.data),
+
+  removeAdjustment: (id) =>
+    api.delete(`/rewards/adjustments/${id}`).then((r) => r.data),
+
   listFeedback: (params) =>
     api.get('/rewards/feedback', { params }).then((r) => r.data),
 

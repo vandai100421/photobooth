@@ -29,6 +29,13 @@ const isWeekend = (isoStr) => {
   return day === 0 || day === 6;
 };
 
+// Ngưỡng phân loại feedback của KH.
+const GOOD_RATING = 4;
+const BAD_RATING = 2;
+
+// Dấu của khoản thưởng/phạt do admin quyết định.
+const adjustmentSign = (a) => (a.kind === 'penalty' ? -1 : 1);
+
 // Tính thưởng cho 1 nhân viên dựa trên dữ liệu đã gom. Dùng chung cho
 // getKpi (chi tiết) và getLeaderboard (tổng hợp).
 const computeKpi = ({
@@ -37,6 +44,8 @@ const computeKpi = ({
   priorBookings,
   monthShifts,
   monthFeedback,
+  monthPosts,
+  monthAdjustments,
   rules,
   holidayMDSet,
 }) => {
@@ -82,6 +91,17 @@ const computeKpi = ({
   const avgRating = ratings.length > 0
     ? Number((ratings.reduce((a, r) => a + r, 0) / ratings.length).toFixed(2))
     : null;
+
+  // Feedback tốt (>= GOOD_RATING) và feedback kém (<= BAD_RATING) trong tháng.
+  const goodFeedbackCount = monthFeedback.filter(
+    (f) => f.rating >= GOOD_RATING,
+  ).length;
+  const badFeedbackCount = monthFeedback.filter(
+    (f) => f.rating <= BAD_RATING,
+  ).length;
+
+  // Bài viết NV viết và đã được đăng trong tháng.
+  const publishedPosts = monthPosts.filter((p) => p.status === 'published');
 
   const breakdown = [];
   let total = 0;
@@ -147,6 +167,33 @@ const computeKpi = ({
     total += penalized * rLate.amount;
   }
 
+  const rPost = ruleBy('post_published');
+  addLine(rPost, publishedPosts.length);
+
+  const rGood = ruleBy('good_feedback');
+  addLine(rGood, goodFeedbackCount);
+
+  const rBad = ruleBy('bad_feedback');
+  addLine(rBad, badFeedbackCount);
+
+  // Thưởng/phạt thủ công của admin: mỗi khoản 1 dòng để truy vết rõ lý do.
+  const adjustmentTotal = (monthAdjustments || []).reduce(
+    (acc, a) => acc + adjustmentSign(a) * Number(a.amount || 0),
+    0,
+  );
+  (monthAdjustments || []).forEach((a) => {
+    const signed = adjustmentSign(a) * Number(a.amount || 0);
+    breakdown.push({
+      code: `adjustment:${a.id}`,
+      name: `${a.kind === 'penalty' ? 'Phạt' : 'Thưởng'} — ${a.reason}`,
+      count: 1,
+      per: signed,
+      total: signed,
+      kind: a.kind,
+    });
+    total += signed;
+  });
+
   return {
     employee_id: employee.id,
     full_name: employee.full_name,
@@ -161,10 +208,38 @@ const computeKpi = ({
       customer_returns: returnCount,
       feedback_count: ratings.length,
       avg_rating: avgRating,
+      good_feedback_count: goodFeedbackCount,
+      bad_feedback_count: badFeedbackCount,
+      published_posts: publishedPosts.length,
+      adjustment_total: Number(adjustmentTotal.toFixed(0)),
     },
     breakdown,
     total_bonus: Number(total.toFixed(0)),
   };
+};
+
+// Bảng employee_adjustments có thể chưa được migrate → trả về mảng rỗng
+// thay vì làm hỏng cả API KPI.
+const isMissingAdjustmentsTable = (error) =>
+  error?.code === '42P01' || /employee_adjustments/i.test(error?.message || '');
+
+// Lấy khoản thưởng/phạt thủ công của 1 NV trong tháng.
+const getAdjustments = async ({ employee_id, month } = {}) => {
+  let query = supabase
+    .from('employee_adjustments')
+    .select(
+      'id, employee_id, kind, amount, reason, source, feedback_id, period_month, created_by, created_at',
+    )
+    .order('created_at', { ascending: false });
+  if (employee_id) query = query.eq('employee_id', employee_id);
+  if (month) query = query.eq('period_month', month);
+
+  const { data, error } = await query;
+  if (error) {
+    if (isMissingAdjustmentsTable(error)) return [];
+    throw new AppError(`Failed to fetch adjustments: ${error.message}`, 500);
+  }
+  return data || [];
 };
 
 // Lấy KPI chi tiết cho 1 nhân viên / 1 tháng.
@@ -172,52 +247,70 @@ const getKpi = async ({ employee_id, month }) => {
   assertMonth(month);
   const { start, end } = monthBounds(month);
 
-  const [empRes, bookingsRes, priorRes, shiftsRes, feedbackRes, rulesRes, holidaysRes] =
-    await Promise.all([
-      supabase
-        .from('employees')
-        .select('id, full_name, phone, role')
-        .eq('id', employee_id)
-        .is('deleted_at', null)
-        .maybeSingle(),
-      supabase
-        .from('bookings')
-        .select('id, customer_id, amount, booking_date, status')
-        .eq('employee_id', employee_id)
-        .gte('booking_date', start)
-        .lte('booking_date', end),
-      // 30 ngày trước cuối tháng để phát hiện KH quay lại.
-      supabase
-        .from('bookings')
-        .select('customer_id, booking_date')
-        .eq('employee_id', employee_id)
-        .eq('status', 'completed')
-        .lt('booking_date', end)
-        .gte(
-          'booking_date',
-          new Date(new Date(end).getTime() - 60 * 86400_000).toISOString(),
-        ),
-      supabase
-        .from('shifts')
-        .select('start_time, check_in_time, status')
-        .eq('employee_id', employee_id)
-        .gte('date', `${month}-01`)
-        .lte('date', `${month}-31`),
-      supabase
-        .from('customer_feedback')
-        .select('rating')
-        .eq('employee_id', employee_id)
-        .gte('created_at', start)
-        .lte('created_at', end),
-      supabase
-        .from('employee_bonus_rules')
-        .select('id, code, name, amount, multiplier, is_active')
-        .eq('is_active', true),
-      supabase
-        .from('holidays')
-        .select('date')
-        .eq('is_active', true),
-    ]);
+  const [
+    empRes,
+    bookingsRes,
+    priorRes,
+    shiftsRes,
+    feedbackRes,
+    rulesRes,
+    holidaysRes,
+    postsRes,
+    adjustments,
+  ] = await Promise.all([
+    supabase
+      .from('employees')
+      .select('id, full_name, phone, role')
+      .eq('id', employee_id)
+      .is('deleted_at', null)
+      .maybeSingle(),
+    supabase
+      .from('bookings')
+      .select('id, customer_id, amount, booking_date, status')
+      .eq('employee_id', employee_id)
+      .gte('booking_date', start)
+      .lte('booking_date', end),
+    // 30 ngày trước cuối tháng để phát hiện KH quay lại.
+    supabase
+      .from('bookings')
+      .select('customer_id, booking_date')
+      .eq('employee_id', employee_id)
+      .eq('status', 'completed')
+      .lt('booking_date', end)
+      .gte(
+        'booking_date',
+        new Date(new Date(end).getTime() - 60 * 86400_000).toISOString(),
+      ),
+    supabase
+      .from('shifts')
+      .select('start_time, check_in_time, status')
+      .eq('employee_id', employee_id)
+      .gte('date', `${month}-01`)
+      .lte('date', `${month}-31`),
+    supabase
+      .from('customer_feedback')
+      .select('rating')
+      .eq('employee_id', employee_id)
+      .gte('created_at', start)
+      .lte('created_at', end),
+    supabase
+      .from('employee_bonus_rules')
+      .select('id, code, name, amount, multiplier, is_active')
+      .eq('is_active', true),
+    supabase
+      .from('holidays')
+      .select('date')
+      .eq('is_active', true),
+    // Bài viết NV viết, đăng trong tháng.
+    supabase
+      .from('posts')
+      .select('id, title, status, published_at')
+      .eq('author_id', employee_id)
+      .is('deleted_at', null)
+      .gte('published_at', start)
+      .lte('published_at', end),
+    getAdjustments({ employee_id, month }),
+  ]);
 
   assertOk(empRes, 'employee');
   if (!empRes.data) {
@@ -229,6 +322,7 @@ const getKpi = async ({ employee_id, month }) => {
   assertOk(feedbackRes, 'feedback');
   assertOk(rulesRes, 'bonus rules');
   assertOk(holidaysRes, 'holidays');
+  assertOk(postsRes, 'posts');
 
   return computeKpi({
     employee: empRes.data,
@@ -236,6 +330,8 @@ const getKpi = async ({ employee_id, month }) => {
     priorBookings: priorRes.data || [],
     monthShifts: shiftsRes.data || [],
     monthFeedback: feedbackRes.data || [],
+    monthPosts: postsRes.data || [],
+    monthAdjustments: adjustments,
     rules: rulesRes.data || [],
     holidayMDSet: new Set((holidaysRes.data || []).map((h) => h.date)),
   });
@@ -249,43 +345,60 @@ const getLeaderboard = async ({ month }) => {
     new Date(start).getTime() - 60 * 86400_000,
   ).toISOString();
 
-  const [empRes, bookingsRes, priorRes, shiftsRes, feedbackRes, rulesRes, holidaysRes] =
-    await Promise.all([
-      supabase
-        .from('employees')
-        .select('id, full_name, phone, role')
-        .is('deleted_at', null)
-        .eq('is_active', true),
-      supabase
-        .from('bookings')
-        .select('id, employee_id, customer_id, amount, booking_date, status')
-        .gte('booking_date', start)
-        .lte('booking_date', end),
-      supabase
-        .from('bookings')
-        .select('employee_id, customer_id, booking_date')
-        .eq('status', 'completed')
-        .lt('booking_date', end)
-        .gte('booking_date', priorStart),
-      supabase
-        .from('shifts')
-        .select('employee_id, start_time, check_in_time, status')
-        .gte('date', `${month}-01`)
-        .lte('date', `${month}-31`),
-      supabase
-        .from('customer_feedback')
-        .select('employee_id, rating')
-        .gte('created_at', start)
-        .lte('created_at', end),
-      supabase
-        .from('employee_bonus_rules')
-        .select('id, code, name, amount, multiplier, is_active')
-        .eq('is_active', true),
-      supabase
-        .from('holidays')
-        .select('date')
-        .eq('is_active', true),
-    ]);
+  const [
+    empRes,
+    bookingsRes,
+    priorRes,
+    shiftsRes,
+    feedbackRes,
+    rulesRes,
+    holidaysRes,
+    postsRes,
+    adjustments,
+  ] = await Promise.all([
+    supabase
+      .from('employees')
+      .select('id, full_name, phone, role')
+      .is('deleted_at', null)
+      .eq('is_active', true),
+    supabase
+      .from('bookings')
+      .select('id, employee_id, customer_id, amount, booking_date, status')
+      .gte('booking_date', start)
+      .lte('booking_date', end),
+    supabase
+      .from('bookings')
+      .select('employee_id, customer_id, booking_date')
+      .eq('status', 'completed')
+      .lt('booking_date', end)
+      .gte('booking_date', priorStart),
+    supabase
+      .from('shifts')
+      .select('employee_id, start_time, check_in_time, status')
+      .gte('date', `${month}-01`)
+      .lte('date', `${month}-31`),
+    supabase
+      .from('customer_feedback')
+      .select('employee_id, rating')
+      .gte('created_at', start)
+      .lte('created_at', end),
+    supabase
+      .from('employee_bonus_rules')
+      .select('id, code, name, amount, multiplier, is_active')
+      .eq('is_active', true),
+    supabase
+      .from('holidays')
+      .select('date')
+      .eq('is_active', true),
+    supabase
+      .from('posts')
+      .select('author_id, status')
+      .is('deleted_at', null)
+      .eq('status', 'published')
+      .gte('published_at', start)
+      .lte('published_at', end),
+    getAdjustments({ month }),
+  ]);
 
   assertOk(empRes, 'employees');
   assertOk(bookingsRes, 'bookings');
@@ -294,33 +407,27 @@ const getLeaderboard = async ({ month }) => {
   assertOk(feedbackRes, 'feedback');
   assertOk(rulesRes, 'bonus rules');
   assertOk(holidaysRes, 'holidays');
+  assertOk(postsRes, 'posts');
 
   const holidayMDSet = new Set((holidaysRes.data || []).map((h) => h.date));
   const rules = rulesRes.data || [];
 
-  const byEmpBookings = new Map();
-  (bookingsRes.data || []).forEach((b) => {
-    if (!b.employee_id) return;
-    if (!byEmpBookings.has(b.employee_id)) byEmpBookings.set(b.employee_id, []);
-    byEmpBookings.get(b.employee_id).push(b);
-  });
-  const byEmpPrior = new Map();
-  (priorRes.data || []).forEach((b) => {
-    if (!b.employee_id) return;
-    if (!byEmpPrior.has(b.employee_id)) byEmpPrior.set(b.employee_id, []);
-    byEmpPrior.get(b.employee_id).push(b);
-  });
-  const byEmpShifts = new Map();
-  (shiftsRes.data || []).forEach((s) => {
-    if (!byEmpShifts.has(s.employee_id)) byEmpShifts.set(s.employee_id, []);
-    byEmpShifts.get(s.employee_id).push(s);
-  });
-  const byEmpFeedback = new Map();
-  (feedbackRes.data || []).forEach((f) => {
-    if (!f.employee_id) return;
-    if (!byEmpFeedback.has(f.employee_id)) byEmpFeedback.set(f.employee_id, []);
-    byEmpFeedback.get(f.employee_id).push(f);
-  });
+  const groupBy = (rows, key) => {
+    const map = new Map();
+    rows.forEach((r) => {
+      if (!r[key]) return;
+      if (!map.has(r[key])) map.set(r[key], []);
+      map.get(r[key]).push(r);
+    });
+    return map;
+  };
+
+  const byEmpBookings = groupBy(bookingsRes.data || [], 'employee_id');
+  const byEmpPrior = groupBy(priorRes.data || [], 'employee_id');
+  const byEmpShifts = groupBy(shiftsRes.data || [], 'employee_id');
+  const byEmpFeedback = groupBy(feedbackRes.data || [], 'employee_id');
+  const byEmpPosts = groupBy(postsRes.data || [], 'author_id');
+  const byEmpAdjustments = groupBy(adjustments, 'employee_id');
 
   const rows = (empRes.data || []).map((emp) =>
     computeKpi({
@@ -329,6 +436,8 @@ const getLeaderboard = async ({ month }) => {
       priorBookings: byEmpPrior.get(emp.id) || [],
       monthShifts: byEmpShifts.get(emp.id) || [],
       monthFeedback: byEmpFeedback.get(emp.id) || [],
+      monthPosts: byEmpPosts.get(emp.id) || [],
+      monthAdjustments: byEmpAdjustments.get(emp.id) || [],
       rules,
       holidayMDSet,
     }),
@@ -453,6 +562,72 @@ const updatePayout = async (id, data) => {
   return payout;
 };
 
+// Thưởng/phạt thủ công (admin).
+const listAdjustments = async ({ employee_id, month } = {}) => {
+  let query = supabase
+    .from('employee_adjustments')
+    .select(
+      'id, employee_id, kind, amount, reason, source, feedback_id, period_month, created_by, created_at, employee:employees(id, full_name, role)',
+    )
+    .order('created_at', { ascending: false });
+  if (employee_id) query = query.eq('employee_id', employee_id);
+  if (month) query = query.eq('period_month', month);
+
+  const { data, error } = await query;
+  if (error) {
+    if (isMissingAdjustmentsTable(error)) return [];
+    throw new AppError(`Failed to fetch adjustments: ${error.message}`, 500);
+  }
+  return data || [];
+};
+
+const createAdjustment = async (data, createdBy) => {
+  const { data: adjustment, error } = await supabase
+    .from('employee_adjustments')
+    .insert({
+      employee_id: data.employee_id,
+      kind: data.kind,
+      amount: data.amount,
+      reason: data.reason,
+      source: data.feedback_id ? 'feedback' : 'manual',
+      feedback_id: data.feedback_id || null,
+      period_month: data.period_month,
+      created_by: createdBy || null,
+    })
+    .select(
+      'id, employee_id, kind, amount, reason, source, feedback_id, period_month, created_by, created_at, employee:employees(id, full_name, role)',
+    )
+    .single();
+
+  if (error) {
+    if (error.code === '23503') {
+      throw new AppError('Referenced employee or feedback not found', 400);
+    }
+    if (error.code === '23514') {
+      throw new AppError('Invalid adjustment values', 400);
+    }
+    if (isMissingAdjustmentsTable(error)) {
+      throw new AppError(
+        'Bảng employee_adjustments chưa được tạo — hãy chạy docs/schema_hr_v2.sql',
+        500,
+      );
+    }
+    throw new AppError(`Failed to create adjustment: ${error.message}`, 500);
+  }
+  return adjustment;
+};
+
+const removeAdjustment = async (id) => {
+  const { error } = await supabase
+    .from('employee_adjustments')
+    .delete()
+    .eq('id', id);
+
+  if (error) {
+    throw new AppError(`Failed to delete adjustment: ${error.message}`, 500);
+  }
+};
+
 // Feedback.
 const listFeedback = async ({ employee_id, month } = {}) => {
   let query = supabase
@@ -507,6 +682,9 @@ module.exports = {
   listPayouts,
   createPayout,
   updatePayout,
+  listAdjustments,
+  createAdjustment,
+  removeAdjustment,
   listFeedback,
   createFeedback,
 };

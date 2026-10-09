@@ -13,6 +13,9 @@ import Toast from '../components/ui/Toast';
 import { formatDateTime } from '../utils/formatDate';
 import { formatCurrency } from '../utils/formatCurrency';
 import {
+  ADJUSTMENT_KIND_BADGE_VARIANT,
+  ADJUSTMENT_KIND_LABELS,
+  ADJUSTMENT_KIND_OPTIONS,
   ROLES,
   ROLE_LABELS,
   PAYOUT_STATUS_BADGE_VARIANT,
@@ -31,6 +34,7 @@ const currentMonth = () => {
 export default function Rewards() {
   const { user } = useAuth();
   const isAdmin = user?.role === ROLES.ADMIN;
+  const canAdjust = isAdmin || user?.role === ROLES.MANAGER;
 
   const [month, setMonth] = useState(currentMonth());
   const [tab, setTab] = useState('leaderboard');
@@ -54,6 +58,25 @@ export default function Rewards() {
   const [createPayoutEmp, setCreatePayoutEmp] = useState('');
   const [createPayoutOpen, setCreatePayoutOpen] = useState(false);
   const [createPayoutLoading, setCreatePayoutLoading] = useState(false);
+
+  // Thưởng/phạt thủ công.
+  const EMPTY_ADJUST = {
+    employee_id: '',
+    kind: 'bonus',
+    amount: '',
+    reason: '',
+    period_month: currentMonth(),
+    feedback_id: '',
+  };
+  const [adjustments, setAdjustments] = useState([]);
+  const [adjustmentsLoading, setAdjustmentsLoading] = useState(false);
+  const [adjustOpen, setAdjustOpen] = useState(false);
+  const [adjustForm, setAdjustForm] = useState(EMPTY_ADJUST);
+  const [adjustErrors, setAdjustErrors] = useState({});
+  const [adjustSubmitting, setAdjustSubmitting] = useState(false);
+  const [adjustActionId, setAdjustActionId] = useState(null);
+  const [feedbackOptions, setFeedbackOptions] = useState([]);
+  const [feedbackLoading, setFeedbackLoading] = useState(false);
 
   const [toast, setToast] = useState({ message: '', variant: 'info' });
   const showToast = useCallback(
@@ -143,16 +166,31 @@ export default function Rewards() {
     }
   }, [month, showToast]);
 
+  const fetchAdjustments = useCallback(async () => {
+    setAdjustmentsLoading(true);
+    try {
+      const res = await rewardsService.listAdjustments({ month });
+      setAdjustments(res?.data ?? []);
+    } catch (err) {
+      setAdjustments([]);
+      showToast(getErr(err, 'Không tải được danh sách thưởng/phạt.'), 'error');
+    } finally {
+      setAdjustmentsLoading(false);
+    }
+  }, [month, showToast]);
+
   useEffect(() => {
     if (tab === 'leaderboard') fetchLeaderboard();
     if (tab === 'rules') fetchRules();
     if (tab === 'payouts') fetchPayouts();
-  }, [tab, fetchLeaderboard, fetchRules, fetchPayouts]);
+    if (tab === 'adjustments') fetchAdjustments();
+  }, [tab, fetchLeaderboard, fetchRules, fetchPayouts, fetchAdjustments]);
 
   useEffect(() => {
     if (tab === 'leaderboard') fetchLeaderboard();
     if (tab === 'payouts') fetchPayouts();
-  }, [month, tab, fetchLeaderboard, fetchPayouts]);
+    if (tab === 'adjustments') fetchAdjustments();
+  }, [month, tab, fetchLeaderboard, fetchPayouts, fetchAdjustments]);
 
   const handleEmployeeChange = (e) => {
     const id = e.target.value;
@@ -224,6 +262,109 @@ export default function Rewards() {
     }
   };
 
+  // ===== Thưởng/phạt thủ công =====
+  const loadFeedbackForAdjust = async (employeeId, feedbackMonth) => {
+    if (!employeeId) {
+      setFeedbackOptions([]);
+      return;
+    }
+    setFeedbackLoading(true);
+    try {
+      const res = await rewardsService.listFeedback({
+        employee_id: employeeId,
+        month: feedbackMonth,
+      });
+      setFeedbackOptions(res?.data ?? []);
+    } catch (_err) {
+      setFeedbackOptions([]);
+    } finally {
+      setFeedbackLoading(false);
+    }
+  };
+
+  const openAdjust = () => {
+    setAdjustForm({
+      employee_id: selectedEmployee || '',
+      kind: 'bonus',
+      amount: '',
+      reason: '',
+      period_month: month,
+      feedback_id: '',
+    });
+    setAdjustErrors({});
+    setFeedbackOptions([]);
+    setAdjustOpen(true);
+    if (selectedEmployee) loadFeedbackForAdjust(selectedEmployee, month);
+  };
+
+  const handleAdjustChange = (e) => {
+    const { name, value } = e.target;
+    setAdjustForm((p) => ({ ...p, [name]: value }));
+    if (name === 'employee_id') {
+      setAdjustForm((p) => ({ ...p, feedback_id: '' }));
+      loadFeedbackForAdjust(value, adjustForm.period_month);
+    }
+    if (adjustErrors[name]) {
+      setAdjustErrors((p) => ({ ...p, [name]: undefined }));
+    }
+  };
+
+  const validateAdjust = () => {
+    const next = {};
+    if (!adjustForm.employee_id) next.employee_id = 'Chọn nhân viên';
+    const amount = Number(adjustForm.amount);
+    if (!adjustForm.amount || Number.isNaN(amount) || amount <= 0) {
+      next.amount = 'Nhập số tiền > 0';
+    }
+    if (!adjustForm.reason.trim()) next.reason = 'Nhập lý do';
+    if (!adjustForm.period_month) next.period_month = 'Chọn tháng';
+    setAdjustErrors(next);
+    return Object.keys(next).length === 0;
+  };
+
+  const handleAdjustSubmit = async (e) => {
+    e.preventDefault();
+    if (!validateAdjust()) return;
+    setAdjustSubmitting(true);
+    try {
+      await rewardsService.createAdjustment({
+        employee_id: adjustForm.employee_id,
+        kind: adjustForm.kind,
+        amount: Number(adjustForm.amount),
+        reason: adjustForm.reason.trim(),
+        period_month: adjustForm.period_month,
+        feedback_id: adjustForm.feedback_id || undefined,
+      });
+      showToast(
+        adjustForm.kind === 'penalty' ? 'Đã ghi nhận khoản phạt.' : 'Đã thưởng nhân viên.',
+      );
+      setAdjustOpen(false);
+      fetchAdjustments();
+      if (tab === 'leaderboard') fetchLeaderboard();
+    } catch (err) {
+      showToast(getErr(err, 'Không lưu được khoản thưởng/phạt.'), 'error');
+    } finally {
+      setAdjustSubmitting(false);
+    }
+  };
+
+  const handleRemoveAdjust = async (a) => {
+    if (!window.confirm(`Xoá khoản ${ADJUSTMENT_KIND_LABELS[a.kind]} này?`)) {
+      return;
+    }
+    setAdjustActionId(a.id);
+    try {
+      await rewardsService.removeAdjustment(a.id);
+      showToast('Đã xoá khoản thưởng/phạt.');
+      fetchAdjustments();
+      if (tab === 'leaderboard') fetchLeaderboard();
+    } catch (err) {
+      showToast(getErr(err, 'Không xoá được.'), 'error');
+    } finally {
+      setAdjustActionId(null);
+    }
+  };
+
   const employeeOptions = useMemo(
     () => [
       { value: '', label: '— Chọn nhân viên —' },
@@ -235,9 +376,33 @@ export default function Rewards() {
     [employees],
   );
 
+  const feedbackSelectOptions = useMemo(
+    () => [
+      { value: '', label: '— Không gắn feedback —' },
+      ...feedbackOptions.map((f) => ({
+        value: f.id,
+        label: `${f.rating}★ · ${
+          f.customer?.full_name ?? 'KH'
+        }${f.note ? ` · ${f.note}` : ''}`,
+      })),
+    ],
+    [feedbackOptions],
+  );
+
+  const adjustTotal = useMemo(
+    () =>
+      adjustments.reduce(
+        (acc, a) =>
+          acc + (a.kind === 'penalty' ? -1 : 1) * Number(a.amount || 0),
+        0,
+      ),
+    [adjustments],
+  );
+
   const tabs = [
     { id: 'leaderboard', label: 'Bảng xếp hạng' },
     { id: 'kpi', label: 'KPI nhân viên' },
+    { id: 'adjustments', label: 'Thưởng / Phạt' },
     { id: 'payouts', label: 'Chốt thù lao' },
     { id: 'rules', label: 'Quy tắc thưởng' },
   ];
@@ -266,7 +431,9 @@ export default function Rewards() {
       </div>
 
       <div className="flex flex-wrap gap-1 border-b border-gray-200">
-        {tabs.map((t) => (
+        {tabs
+          .filter((t) => t.id !== 'adjustments' || canAdjust)
+          .map((t) => (
           <button
             key={t.id}
             type="button"
@@ -293,8 +460,16 @@ export default function Rewards() {
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
-                  {['#', 'Nhân viên', 'Booking', 'Doanh thu', 'Đánh giá', 'Tổng thưởng'].map(
-                    (h) => (
+                  {[
+                    '#',
+                    'Nhân viên',
+                    'Booking',
+                    'Doanh thu',
+                    'Đánh giá',
+                    'Bài viết',
+                    'Điều chỉnh',
+                    'Tổng thưởng',
+                  ].map((h) => (
                       <th
                         key={h}
                         className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500"
@@ -323,6 +498,22 @@ export default function Rewards() {
                     <td className="px-4 py-3 text-sm text-gray-700">
                       {row.metrics.avg_rating != null
                         ? `⭐ ${row.metrics.avg_rating}`
+                        : '—'}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-700">
+                      {row.metrics.published_posts}
+                    </td>
+                    <td
+                      className={`px-4 py-3 text-sm font-medium ${
+                        row.metrics.adjustment_total > 0
+                          ? 'text-green-600'
+                          : row.metrics.adjustment_total < 0
+                            ? 'text-red-600'
+                            : 'text-gray-400'
+                      }`}
+                    >
+                      {row.metrics.adjustment_total !== 0
+                        ? formatCurrency(row.metrics.adjustment_total)
                         : '—'}
                     </td>
                     <td className="px-4 py-3 text-sm font-semibold text-brand-600">
@@ -398,6 +589,31 @@ export default function Rewards() {
                 />
               </div>
 
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
+                <StatCard
+                  title="Bài viết đã đăng"
+                  value={kpi.metrics.published_posts ?? 0}
+                  variant="info"
+                />
+                <StatCard
+                  title="Feedback tốt (≥4★)"
+                  value={kpi.metrics.good_feedback_count ?? 0}
+                  variant="success"
+                />
+                <StatCard
+                  title="Feedback kém (≤2★)"
+                  value={kpi.metrics.bad_feedback_count ?? 0}
+                  variant={kpi.metrics.bad_feedback_count > 0 ? 'danger' : 'default'}
+                />
+                <StatCard
+                  title="Thưởng/phạt thủ công"
+                  value={formatCurrency(kpi.metrics.adjustment_total ?? 0)}
+                  variant={
+                    (kpi.metrics.adjustment_total ?? 0) < 0 ? 'danger' : 'default'
+                  }
+                />
+              </div>
+
               <div className="rounded-xl border border-gray-200 bg-white p-4">
                 <div className="mb-3 flex items-center justify-between">
                   <h3 className="text-sm font-semibold text-gray-700">
@@ -441,6 +657,113 @@ export default function Rewards() {
                 )}
               </div>
             </>
+          )}
+        </div>
+      )}
+
+      {/* ===== Thưởng / phạt thủ công ===== */}
+      {tab === 'adjustments' && canAdjust && (
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm text-gray-500">
+              Khoản thưởng/phạt tay của quản trị viên được cộng vào KPI và thù
+              lao của đúng tháng đó.
+            </p>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-500">
+                Tổng tháng {month}:{' '}
+                <strong
+                  className={
+                    adjustTotal >= 0 ? 'text-green-600' : 'text-red-600'
+                  }
+                >
+                  {formatCurrency(adjustTotal)}
+                </strong>
+              </span>
+              {isAdmin && (
+                <Button size="sm" onClick={openAdjust}>
+                  + Thưởng / Phạt
+                </Button>
+              )}
+            </div>
+          </div>
+
+          {adjustmentsLoading ? (
+            <LoadingBlock />
+          ) : adjustments.length === 0 ? (
+            <EmptyBlock text="Chưa có khoản thưởng/phạt nào trong tháng." />
+          ) : (
+            <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    {[
+                      'Nhân viên',
+                      'Loại',
+                      'Số tiền',
+                      'Lý do',
+                      'Nguồn',
+                      'Ngày',
+                      ...(isAdmin ? ['Hành động'] : []),
+                    ].map((h) => (
+                      <th
+                        key={h}
+                        className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500"
+                      >
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {adjustments.map((a) => (
+                    <tr key={a.id} className="hover:bg-gray-50">
+                      <td className="px-4 py-3 text-sm text-gray-700">
+                        {a.employee?.full_name ?? '—'}
+                      </td>
+                      <td className="px-4 py-3 text-sm">
+                        <Badge
+                          variant={
+                            ADJUSTMENT_KIND_BADGE_VARIANT[a.kind] ?? 'default'
+                          }
+                        >
+                          {ADJUSTMENT_KIND_LABELS[a.kind] ?? a.kind}
+                        </Badge>
+                      </td>
+                      <td
+                        className={`px-4 py-3 text-sm font-semibold ${
+                          a.kind === 'penalty' ? 'text-red-600' : 'text-green-600'
+                        }`}
+                      >
+                        {a.kind === 'penalty' ? '−' : '+'}
+                        {formatCurrency(a.amount)}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-gray-700">
+                        {a.reason}
+                      </td>
+                      <td className="px-4 py-3 text-xs text-gray-500">
+                        {a.source === 'feedback' ? 'Gắn feedback' : 'Thủ công'}
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-3 text-xs text-gray-500">
+                        {formatDateTime(a.created_at)}
+                      </td>
+                      {isAdmin && (
+                        <td className="px-4 py-3 text-sm">
+                          <Button
+                            size="sm"
+                            variant="danger"
+                            loading={adjustActionId === a.id}
+                            onClick={() => handleRemoveAdjust(a)}
+                          >
+                            Xoá
+                          </Button>
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
       )}
@@ -664,6 +987,107 @@ export default function Rewards() {
           onChange={(e) => setCreatePayoutEmp(e.target.value)}
           placeholder="Chọn nhân viên"
         />
+      </Modal>
+
+      {/* Modal thưởng/phạt thủ công */}
+      <Modal
+        open={adjustOpen}
+        onClose={() => setAdjustOpen(false)}
+        title="Thưởng / phạt nhân viên"
+        size="md"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setAdjustOpen(false)}>
+              Hủy
+            </Button>
+            <Button
+              type="submit"
+              form="adjust-form"
+              loading={adjustSubmitting}
+              variant={adjustForm.kind === 'penalty' ? 'danger' : 'primary'}
+            >
+              {adjustForm.kind === 'penalty' ? 'Ghi nhận phạt' : 'Ghi nhận thưởng'}
+            </Button>
+          </>
+        }
+      >
+        <form
+          id="adjust-form"
+          onSubmit={handleAdjustSubmit}
+          className="grid grid-cols-1 gap-3 sm:grid-cols-2"
+          noValidate
+        >
+          <div className="sm:col-span-2">
+            <Select
+              label="Nhân viên"
+              name="employee_id"
+              options={employeeOptions}
+              value={adjustForm.employee_id}
+              onChange={handleAdjustChange}
+              error={adjustErrors.employee_id}
+              placeholder="Chọn nhân viên"
+            />
+          </div>
+          <Select
+            label="Loại"
+            name="kind"
+            options={ADJUSTMENT_KIND_OPTIONS}
+            value={adjustForm.kind}
+            onChange={handleAdjustChange}
+          />
+          <Input
+            label="Số tiền (đ)"
+            name="amount"
+            type="number"
+            min="1"
+            step="1000"
+            value={adjustForm.amount}
+            onChange={handleAdjustChange}
+            error={adjustErrors.amount}
+            placeholder="100000"
+          />
+          <Input
+            label="Tháng áp dụng"
+            name="period_month"
+            type="month"
+            value={adjustForm.period_month}
+            onChange={handleAdjustChange}
+            error={adjustErrors.period_month}
+          />
+          <div className="sm:col-span-2">
+            <Select
+              label="Gắn với feedback khách hàng (không bắt buộc)"
+              name="feedback_id"
+              options={feedbackSelectOptions}
+              value={adjustForm.feedback_id}
+              onChange={handleAdjustChange}
+              disabled={!adjustForm.employee_id || feedbackLoading}
+              placeholder={
+                adjustForm.employee_id
+                  ? '— Chọn feedback —'
+                  : 'Chọn nhân viên trước'
+              }
+            />
+          </div>
+          <div className="sm:col-span-2">
+            <Input
+              label="Lý do"
+              name="reason"
+              value={adjustForm.reason}
+              onChange={handleAdjustChange}
+              error={adjustErrors.reason}
+              placeholder={
+                adjustForm.kind === 'penalty'
+                  ? 'VD: KH phản ánh chụp ảnh chậm, ảnh mờ'
+                  : 'VD: KH feedback 5★ cảm ơn nhân viên rất nhiệt tình'
+              }
+            />
+          </div>
+          <p className="sm:col-span-2 text-xs text-gray-500">
+            Khoản này được cộng (thưởng) hoặc trừ (phạt) vào tổng thưởng của
+            tháng đã chọn và hiển thị trong KPI + bảng chốt thù lao.
+          </p>
+        </form>
       </Modal>
     </div>
   );

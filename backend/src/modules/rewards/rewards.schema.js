@@ -54,6 +54,24 @@ const upsertBonusRulesSchema = {
   }),
 };
 
+const adjustmentsListSchema = {
+  query: z.object({
+    month: z.string().regex(monthRegex, 'month must be YYYY-MM').nullish(),
+    employee_id: z.string().uuid('Invalid employee_id').nullish(),
+  }),
+};
+
+const createAdjustmentSchema = {
+  body: z.object({
+    employee_id: z.string().uuid('Invalid employee_id'),
+    kind: z.enum(['bonus', 'penalty']),
+    amount: z.number().positive('amount must be > 0'),
+    reason: z.string().min(1, 'reason is required').max(500),
+    feedback_id: z.string().uuid('Invalid feedback_id').nullish(),
+    period_month: z.string().regex(monthRegex, 'period_month must be YYYY-MM'),
+  }),
+};
+
 const createFeedbackSchema = {
   body: z.object({
     booking_id: z.string().uuid('Invalid booking_id'),
@@ -71,5 +89,7 @@ module.exports = {
   createPayoutSchema,
   updatePayoutSchema,
   upsertBonusRulesSchema,
+  adjustmentsListSchema,
+  createAdjustmentSchema,
   createFeedbackSchema,
 };

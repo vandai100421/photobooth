@@ -98,6 +98,21 @@ export const PAYOUT_STATUS_LABELS = {
   paid: 'Đã trả',
 };
 
+export const ADJUSTMENT_KIND_OPTIONS = [
+  { value: 'bonus', label: 'Thưởng (+)' },
+  { value: 'penalty', label: 'Phạt (−)' },
+];
+
+export const ADJUSTMENT_KIND_BADGE_VARIANT = {
+  bonus: 'success',
+  penalty: 'danger',
+};
+
+export const ADJUSTMENT_KIND_LABELS = {
+  bonus: 'Thưởng',
+  penalty: 'Phạt',
+};
+
 export const CUSTOMER_STATUS_OPTIONS = [
   { value: 'active', label: 'Đang hoạt động' },
   { value: 'inactive', label: 'Không hoạt động' },

@@ -47,6 +47,28 @@ router.put(
   ctrl.updatePayout,
 );
 
+// Thưởng/phạt thủ công
+router.get(
+  '/adjustments',
+  auth,
+  rbac('admin', 'manager'),
+  validate(schema.adjustmentsListSchema),
+  ctrl.listAdjustments,
+);
+router.post(
+  '/adjustments',
+  auth,
+  rbac('admin'),
+  validate(schema.createAdjustmentSchema),
+  ctrl.createAdjustment,
+);
+router.delete(
+  '/adjustments/:id',
+  auth,
+  rbac('admin'),
+  ctrl.removeAdjustment,
+);
+
 // Đánh giá của khách hàng
 router.get('/feedback', auth, ctrl.listFeedback);
 router.post(
