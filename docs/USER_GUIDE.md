@@ -18,6 +18,7 @@ hệ thống quản lý **THE TAP**.
 6. [Danh sách sinh nhật & gửi tin nhắn nhanh](#6-danh-sách-sinh-nhật--gửi-tin-nhắn-nhanh)
 7. [Quản lý tin nhắn — gửi thủ công & xem log](#7-quản-lý-tin-nhắn--gửi-thủ-công--xem-log)
 8. [Cài đặt (dành cho admin)](#8-cài-đặt-dành-cho-admin)
+9. [Quản lý mã chụp — Photobooth/Selfbooth](#9-quản-lý-mã-chụp--photoboothselfbooth)
 
 ---
 
@@ -225,6 +226,52 @@ Vào menu **Cài đặt**.
 
 ---
 
+## 9. Quản lý mã chụp — Photobooth/Selfbooth
+
+`[(screenshot: trang Mã chụp với 4 tab + StatCards + bộ lọc ngày)]`
+
+Vào menu **Mã chụp 📸**. Trang này gom dữ liệu mã chụp và lượt chụp từ **2 hệ thống
+máy** (Photobooth và Selfbooth) để **đối chiếu** mã đã bán với ảnh chụp được và tiền
+thực thu.
+
+### Bộ lọc chung (đầu trang)
+- **Hệ thống:** chọn `Photobooth` hoặc `Selfbooth`.
+- **Từ ngày / Đến ngày.**
+- **Đồng bộ:** kéo dữ liệu mới từ API hệ thống về (chỉ thêm mã/lượt chưa có, không
+  ghi đè dữ liệu cũ).
+- **Tải lại:** đọc lại dữ liệu đã lưu trong hệ thống.
+- **Tài khoản API:** mở hộp thoại nhập tài khoản đăng nhập API hệ thống (admin).
+
+### Tab **Đối chiếu**
+Tổng hợp theo từng mã chụp: mã có được dùng để chụp không (đã chụp / chưa dùng),
+số lượt chụp, tổng số ảnh, và so sánh **tiền mặt máy ghi** với **tiền mặt thực nhận**
+(bạn nhập tay). Cột **Chênh lệch** tô đỏ khi hai số không khớp.
+
+### Tab **Mã chụp**
+Danh sách mã đã bán: mã, trạng thái (chưa dùng / đã chụp), thời gian tạo. Nút
+**Tạo mã chụp** (góc phải) mở form tạo mã mới:
+- **Selfbooth:** chọn **gói chụp**.
+- **Photobooth:** chọn **loại** (Giảm giá / Tiền mặt) và nhập **giá trị**.
+- **Ghi chú:** chọn `Tiền mặt tại quầy` hoặc `Chuyển khoản tại quầy`.
+> Mã tạo ra trên hệ thống máy ngay sau khi bấm Tạo.
+
+### Tab **Lượt chụp**
+Danh sách các lượt chụp (session) từ máy: mã tương ứng, thời gian, số ảnh.
+
+### Tab **Tiền nhập tay**
+Nhập số tiền máy báo và số tiền thực nhận cho từng mã để hệ thống tính chênh lệch.
+- Bấm **Thêm** → chọn mã → nhập `Tiền mặt máy ghi` và `Tiền mặt thực nhận` → Lưu.
+- Xoá được bản ghi nhập sai.
+
+### Cấu hình tài khoản API (admin)
+1. Bấm **Tài khoản API**.
+2. Điền cho từng hệ thống: **Base URL**, **Studio ID** (Selfbooth) hoặc **Tenant**
+   (Photobooth), **Email đăng nhập**, **Mật khẩu** (hoặc dán **Token** nếu có).
+3. Bấm **Lưu**, rồi **Đăng nhập & kiểm tra** để xác nhận kết nối.
+4. Bấm **Đồng bộ** ở trang chính để tải dữ liệu.
+
+---
+
 ## Lỗi thường gặp
 
 | Tình huống | Cách xử lý |
@@ -234,6 +281,8 @@ Vào menu **Cài đặt**.
 | Voucher báo "hết lượt" | Tạo voucher mới hoặc tăng số lượt dùng trong trang Voucher. |
 | Trang loading lâu | F5 lại; nếu vẫn chậm báo admin kiểm tra server. |
 | Không thấy menu Cài đặt | Bạn không phải admin — chỉ admin mới truy cập được. |
+| Trang Mã chụp báo "Chưa chạy migration" | Admin chạy `docs/schema_booth.sql` trên Supabase. |
+| Đồng bộ mã chụp lỗi 401 | Sai/thiếu tài khoản, hoặc token hết hạn → mở "Tài khoản API" nhập lại rồi Đăng nhập & kiểm tra. |
 
 ---
 

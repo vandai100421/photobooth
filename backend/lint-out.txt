@@ -1,0 +1,12 @@
+
+> tap-photobooth-backend@1.0.0 lint
+> eslint .
+
+
+E:\Work\photobooth\backend\src\services\boothClient.js
+  365:1  error  Expected indentation of 8 spaces but found 10  indent
+  366:1  error  Expected indentation of 6 spaces but found 8   indent
+
+✖ 2 problems (2 errors, 0 warnings)
+  2 errors and 0 warnings potentially fixable with the `--fix` option.
+

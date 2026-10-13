@@ -1,0 +1,12 @@
+// Doanh thu Photobooth Portal: 
+const fetchPortalRevenue = async (config, token, { from, to } = {}) => {
+  const base = config.baseUrl.replace(/\/$/, '');
+  const tenant = encodeURIComponent(config.tenant || '');
+  const params = new URLSearchParams();
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
+  const url = `${base}/portal/${tenant}/revenue${params.toString() ? `?${params.toString()}` : ''}`;
+  const data = await getJson(config, token, url);
+  return extractList(data);
+};
+

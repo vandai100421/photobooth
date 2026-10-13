@@ -401,6 +401,135 @@ export const ROUTES = {
   SETTINGS: '/settings',
   SCHEDULE: '/schedule',
   REWARDS: '/rewards',
+  SHOOT: '/shoot-codes',
+  PORTAL_REVENUE: '/portal-revenue',
+};
+
+// Cấu hình API Portal Photobooth ngoài (external).
+export const PHOTOBOOTH_PORTAL = {
+  BASE_URL: 'https://photobooth-api.boothstudio2026.workers.dev',
+  TENANT: 'thetap@studio.vn',
+};
+
+// Phương thức thanh toán trong response revenue portal.
+export const PORTAL_PAYMENT_METHOD_LABELS = {
+  cash: 'Tiền mặt',
+  voucher: 'Voucher',
+  transfer: 'Chuyển khoản',
+};
+
+export const PORTAL_PAYMENT_METHOD_BADGE_VARIANT = {
+  cash: 'success',
+  voucher: 'warning',
+  transfer: 'info',
+};
+
+export const BOOTH_SYSTEMS = {
+  PHOTOBOOTH: 'photobooth',
+  SELFBOOTH: 'selfbooth',
+};
+
+export const BOOTH_SYSTEM_OPTIONS = [
+  { value: 'photobooth', label: 'Photobooth' },
+  { value: 'selfbooth', label: 'Selfbooth' },
+];
+
+export const BOOTH_SYSTEM_LABELS = {
+  photobooth: 'Photobooth',
+  selfbooth: 'Selfbooth',
+};
+
+// Ghi chú khi tạo mã chụp (dùng chung 2 hệ thống).
+export const BOOTH_NOTE_OPTIONS = [
+  { value: 'Tiền mặt tại quầy', label: 'Tiền mặt tại quầy' },
+  { value: 'Chuyển khoản tại quầy', label: 'Chuyển khoản tại quầy' },
+];
+
+// Loại mã Selfbooth (boothme.tech): dùng 1 lần / dùng lại.
+export const SELFBOOTH_CODE_KIND_OPTIONS = [
+  { value: 'single', label: 'Dùng 1 lần' },
+  { value: 'reusable', label: 'Dùng lại' },
+];
+
+// Nhãn các chỉ số doanh thu Selfbooth (field trong response.summary).
+export const BOOTH_REVENUE_SUMMARY_LABELS = {
+  used_codes: 'Mã đã dùng',
+  code_revenue_vnd: 'Doanh thu từ mã (đ)',
+  single_uses: 'Lượt dùng 1 lần',
+  reusable_uses: 'Lượt dùng lại',
+  local_uses: 'Lượt tại máy',
+};
+
+// Loại mã Photobooth: giảm giá = cash, tiền mặt = cash_code.
+export const PHOTOBOOTH_CODE_TYPE_OPTIONS = [
+  { value: 'cash', label: 'Giảm giá (cash)' },
+  { value: 'cash_code', label: 'Tiền mặt (cash_code)' },
+];
+
+export const PHOTOBOOTH_CODE_TYPE_LABELS = {
+  cash: 'Giảm giá',
+  cash_code: 'Tiền mặt',
+};
+
+// Trạng thái mã chụp suy diễn (backend trả về ở field derived_status).
+export const BOOTH_CODE_STATUS_LABELS = {
+  used: 'Đã dùng',
+  unused: 'Chưa dùng',
+  error: 'Lỗi',
+  revoked: 'Đã huỷ',
+  missing_session: 'Thiếu lượt chụp',
+  orphan: 'Mã đã xóa',
+};
+
+export const BOOTH_CODE_STATUS_BADGE_VARIANT = {
+  used: 'success',
+  unused: 'warning',
+  error: 'danger',
+  revoked: 'default',
+  missing_session: 'warning',
+  orphan: 'danger',
+};
+
+// Bộ lọc dùng cho bảng sổ doanh thu (gộp mã chụp + lượt dùng mã đã xóa).
+export const BOOTH_LEDGER_FILTER_OPTIONS = [
+  { value: '', label: 'Tất cả' },
+  { value: 'unused', label: 'Chưa dùng' },
+  { value: 'used', label: 'Đã dùng' },
+  { value: 'error', label: 'Lỗi' },
+  { value: 'missing_session', label: 'Thiếu lượt' },
+  { value: 'revoked', label: 'Đã huỷ' },
+  { value: 'orphan', label: 'Mã đã xóa' },
+];
+
+export const BOOTH_CODE_STATUS_FILTER_OPTIONS = [
+  { value: '', label: 'Tất cả' },
+  { value: 'unused', label: 'Chưa dùng' },
+  { value: 'used', label: 'Đã dùng' },
+  { value: 'error', label: 'Lỗi' },
+  { value: 'missing_session', label: 'Thiếu lượt' },
+  { value: 'revoked', label: 'Đã huỷ' },
+];
+
+// Lý do lỗi chọn sẵn cho nhân viên.
+export const BOOTH_ERROR_REASON_OPTIONS = [
+  { value: 'Hết giấy in', label: 'Hết giấy in' },
+  { value: 'Lỗi máy ảnh', label: 'Lỗi máy ảnh' },
+  { value: 'Khách huỷ', label: 'Khách huỷ' },
+  { value: 'Mất kết nối mạng', label: 'Mất kết nối mạng' },
+  { value: 'Máy bị treo', label: 'Máy bị treo' },
+  { value: 'Khác', label: 'Khác' },
+];
+
+export const BOOTH_STAFF_STATUS_OPTIONS = [
+  { value: 'error', label: 'Báo lỗi' },
+  { value: 'resolved', label: 'Đã xử lý' },
+  { value: 'ok', label: 'Bình thường' },
+];
+
+export const BOOTH_STAFF_STATUS_BADGE_VARIANT = {
+  error: 'danger',
+  resolved: 'success',
+  ok: 'info',
 };
 
 export const NAV_ITEMS = [
@@ -410,6 +539,8 @@ export const NAV_ITEMS = [
   { to: ROUTES.REWARDS, label: 'KPI & Thưởng', icon: '💰' },
   { to: ROUTES.CUSTOMERS, label: 'Khách hàng', icon: '👥' },
   { to: ROUTES.VOUCHERS, label: 'Voucher', icon: '🎟️' },
+  { to: ROUTES.SHOOT, label: 'Mã chụp', icon: '📸' },
+  { to: ROUTES.PORTAL_REVENUE, label: 'Tổng hợp doanh thu', icon: '🧾' },
   { to: ROUTES.BOOKINGS, label: 'Booking', icon: '📆' },
   { to: ROUTES.POSTS, label: 'Bài viết', icon: '📝' },
   { to: ROUTES.HOLIDAYS, label: 'Ngày lễ', icon: '🎉' },

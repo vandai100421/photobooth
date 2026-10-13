@@ -24,6 +24,7 @@ const dashboardRouter = require('./modules/dashboard/dashboard.routes');
 const scheduleRouter = require('./modules/schedule/schedule.routes');
 const rewardsRouter = require('./modules/rewards/rewards.routes');
 const dailyRevenueRouter = require('./modules/daily-revenue/daily-revenue.routes');
+const boothRouter = require('./modules/booth/booth.routes');
 const cronRouter = require('./modules/cron/cron.routes');
 
 const app = express();
@@ -63,6 +64,7 @@ app.use('/api/v1/dashboard', dashboardRouter);
 app.use('/api/v1/schedule', scheduleRouter);
 app.use('/api/v1/rewards', rewardsRouter);
 app.use('/api/v1/daily-revenue', dailyRevenueRouter);
+app.use('/api/v1/booth', boothRouter);
 app.use('/api/v1/cron', cronRouter);
 
 app.use(notFound);

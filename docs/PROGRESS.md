@@ -4,7 +4,7 @@
 > Mở file này đầu tiên mỗi lần làm việc tiếp để biết đang ở đâu, làm tiếp gì.
 > Cập nhật sau mỗi session.
 
-Cập nhật lần cuối: 2026-08-13
+Cập nhật lần cuối: 2026-10-12
 
 ---
 
@@ -61,6 +61,40 @@ Còn chờ **credentials/thao tác thủ công bên ngoài** (Zalo OA, Gmail, Cl
 - Webhooks: Zalo follow event → tự tạo/cập nhật customer với zalo_id
 - Scheduler: cron 8:00 AM daily — birthday/holiday/reengage jobs + fallback
 
+### Module Mã chụp — Photobooth/Selfbooth 🆕
+- Backend module `booth`: `/api/v1/booth/*` (accounts, login, packages, sync, codes, sessions, create-code, summary, reconciliations)
+- Service `boothClient.js`: gọi API ngoài (login/fetch/create), xử lý tolerant nhiều shape response
+- DB (migration `docs/schema_booth.sql + schema_booth_v2.sql + schema_booth_v3.sql`): `booth_shoot_codes`, `booth_media_sessions`, `booth_reconciliations`, `booth_code_reviews`
+- Frontend: trang `ShootCodes` (nav "Mã chụp") — 2 tab Mã chụp (gộp mã + lượt chụp) / Tiền nhập tay 🆕
+- **Gộp mã + lượt chụp (2026-10-11):** bảng mã hiển thị kèm lượt chụp liên kết, trạng thái suy diễn
+  (`used/unused/error/revoked/missing_session`), lọc theo trạng thái + tìm kiếm, tùy chọn "Hiện lượt lạ".
+- **Ghi chú nhân viên (2026-10-11):** modal chi tiết mã cho phép nhập trạng thái xử lý + lý do (chọn sẵn
+  hoặc ghi tự do) → lưu vào `booth_code_reviews` qua `PUT /booth/:system/codes/:code/review` (không bị ghi đè khi re-sync).
+- **Chuyển Selfbooth sang boothme.tech (2026-10-12):** `boothClient` dùng base `https://boothme.tech` + endpoint
+  `/v1/web/*` (`/auth/login`, `/packages`, `/codes`, `/capture-sessions`, `/revenue`). Xác thực bằng **cookie phiên**
+  (dán thủ công trong "Tài khoản API") hoặc Bearer — tự nhận diện. Login gửi `{email,password,turnstile_token?}`.
+- **Tab Doanh thu (2026-10-12):** `GET /booth/:system/revenue?from&to` lấy trực tiếp từ API (không cache) →
+  thẻ tổng hợp (`used_codes`, `code_revenue_vnd`, `single_uses`, `reusable_uses`, `local_uses`) + bảng lượt dùng.
+- Frontend `ShootCodes`: 3 tab **Mã chụp | Doanh thu | Tiền nhập tay** (bỏ UI lượt chụp riêng; mã hiển thị
+  kèm phòng/máy + ngày tạo). Modal tạo mã Selfbooth thêm chọn loại (`single`/`reusable`) + mã tuỳ chọn.
+- **Xử lý Turnstile (2026-10-12):** boothme.tech chặn bot bằng Cloudflare Turnstile và không cho đăng nhập
+  tự động (widget không kết nối được với Cloudflare). **Giải pháp hiện tại:** Selfbooth dùng **cookie phiên
+  dán thủ công** — modal Tài khoản API chỉ còn các trường cần thiết (Base URL, Studio ID, Cookie/Token phiên,
+  nút Lưu); bỏ email/mật khẩu/turnstile/login path. Backend vẫn hỗ trợ `turnstile_token` 1 lần nếu sau này có
+  token hợp lệ. Cookie có `=` tự nhận diện là session cookie (header `Cookie`); ngược lại dùng `Authorization: Bearer`.
+- **Bỏ server Selfbooth cũ (2026-10-12):** Selfbooth **luôn** gọi `https://boothme.tech` (`/v1/web/*`) — `getConfig`/
+  `getAccounts` bỏ qua `selfbooth_api_base`/`selfbooth_login_path` lưu trong DB, `saveAccount` không còn ghi ghi đè
+  base/login path cho selfbooth. Đã xoá cấu hình cũ `selfbooth_api_base = selfbooth-api.thientiva.workers.dev` khỏi bảng settings.
+- **Sửa lỗi bị đăng xuất khi đồng bộ (2026-10-12):** lỗi xác thực từ API ngoài (401/403) trước đây bị trả về
+  đúng mã 401 → frontend tưởng hết phiên admin và tự đăng xuất. Nay `boothClient` quy mọi lỗi upstream
+  (kể cả 401/403) về **502** kèm thông báo rõ. Thêm `fetchUpstream`: token Photobooth hết hạn sẽ **tự đăng
+  nhập lại 1 lần** rồi thử lại (Selfbooth vẫn phải dán cookie). Đã kiểm chứng API thật: login OK, tải 170 mã.
+- Modal quản lý tài khoản API (email/password/token, base URL, login path, studio/tenant) + test đăng nhập
+- Modal tạo mã chụp (Selfbooth: chọn gói; Photobooth: loại Giảm giá/`cash` — Tiền mặt/`cash_code` + giá trị)
+- Đồng bộ chỉ THÊM mã/session mới (dedupe theo `system`+`code`/`external_id`)
+- Nhập tay "tiền mặt máy ghi" + "tiền mặt thực nhận" → đối chiếu chênh lệch
+- Kế hoạch chi tiết: `docs/BOOTH_SHOOT_PLAN.md`
+
 ---
 
 ## Còn phải làm (tất cả cần thao tác thủ công bên ngoài)
@@ -93,8 +127,7 @@ Còn chờ **credentials/thao tác thủ công bên ngoài** (Zalo OA, Gmail, Cl
 - [ ] Sửa `backend/.env` thêm `CLOUDINARY_URL=cloudinary://api_key:api_secret@cloud_name`
 - [ ] Test upload ảnh (POST /upload)
 
-### 4. Deploy production ✅ (đã deploy)
-- [x] Deploy Frontend → Vercel: https://tap-photobooth.vercel.app
+### 4. Deploy production ✅ (đã deploy)- [x] Deploy Frontend → Vercel: https://tap-photobooth.vercel.app
 - [x] Deploy Backend → Vercel Serverless: https://ptb-api-navy.vercel.app
   - Đổi từ Railway/Render sang Vercel Serverless (free, không cần thẻ, không ngủ)
   - Serverless entry: `backend/api/index.js` + `backend/vercel.json` (rewrites + crons)
@@ -104,6 +137,13 @@ Còn chờ **credentials/thao tác thủ công bên ngoài** (Zalo OA, Gmail, Cl
 - [ ] Setup monitoring (Sentry)
 - [x] Test production: /health ✅, CORS ✅, login ✅, cron dry-run ✅
 - [ ] Bổ sung Zalo OA + Gmail SMTP + Cloudinary thật → update env vars trên Vercel → redeploy
+
+### 5. Mã chụp Photobooth/Selfbooth — API ngoài (thủ công)
+- [ ] Chạy migration `docs/schema_booth.sql` + `docs/schema_booth_v2.sql` + `docs/schema_booth_v3.sql` (bảng `booth_code_reviews`) trên Supabase SQL Editor
+- [ ] **Selfbooth:** vào "Tài khoản API" → mở boothme.tech trên trình duyệt → đăng nhập → F12 → Application → Cookies → copy cookie domain boothme.tech → dán vào ô "Cookie / Token phiên" (chỉ cần Base URL + Studio ID, không cần email/mật khẩu) → Lưu
+- [ ] Cung cấp tài khoản Photobooth (email/password hoặc token) → nhập ở nút "Tài khoản API" trong trang Mã chụp
+- [ ] Xác nhận đường dẫn login thật nếu khác mặc định (Selfbooth `/v1/web/auth/login`, Photobooth `/auth/login`)
+- [ ] Bấm "Đăng nhập & kiểm tra" (Photobooth) → "Đồng bộ" → kiểm tra tab Doanh thu đối chiếu với thực tế
 
 ---
 

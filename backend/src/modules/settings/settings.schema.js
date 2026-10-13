@@ -5,6 +5,10 @@ const { z } = require('zod');
 const SENSITIVE_KEYS = new Set([
   'gmail_app_password',
   'zalo_access_token',
+  'selfbooth_login_password',
+  'selfbooth_token',
+  'photobooth_login_password',
+  'photobooth_token',
 ]);
 
 // Update payload: { settings: { key: value, ... } } or a flat { key: value }

@@ -191,3 +191,30 @@
 
 ### Còn lại
 - [ ] Chạy migration `schema_hr_v2.sql` lên Supabase (cần user làm thủ công)
+
+---
+
+## Mở rộng — Quản lý mã chụp (Photobooth/Selfbooth)
+
+> Migration: `docs/schema_booth.sql + schema_booth_v2.sql` (chạy tay trên Supabase SQL Editor).
+> Kế hoạch chi tiết: `docs/BOOTH_SHOOT_PLAN.md`.
+
+### Database
+- [x] Bảng `booth_shoot_codes`, `booth_media_sessions`, `booth_reconciliations`
+- [x] Index + trigger `updated_at` + RLS + grants
+- [ ] Chạy migration `schema_booth.sql + schema_booth_v2.sql` lên Supabase (cần user làm thủ công)
+
+### Backend API
+- [x] `boothClient.js` — login/fetch packages/codes/sessions/create (tolerant response)
+- [x] Module `booth`: accounts, save-account, login, packages, sync, codes, sessions, create-code, summary, reconciliations (CRUD)
+- [x] Mount `/api/v1/booth` + rbac
+- [x] Sensitive keys (password/token) trong settings
+
+### Frontend UI
+- [x] Trang `ShootCodes` (menu "Mã chụp"): chọn hệ thống + lọc ngày + Đồng bộ
+- [x] Tab Đối chiếu / Mã chụp / Lượt chụp / Tiền nhập tay + StatCards
+- [x] Modal tài khoản API (2 hệ thống) + test đăng nhập; login path cấu hình được
+- [x] Modal tạo mã chụp (Selfbooth chọn gói; Photobooth chọn loại + giá trị; note Tiền mặt/Chuyển khoản)
+
+### Còn lại
+- [ ] Có credentials thật → test login + sync + tạo mã + đối chiếu
