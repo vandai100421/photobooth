@@ -1,5 +1,6 @@
 import { Component } from 'react';
 import Button from '../ui/Button';
+import { captureException } from '../../utils/sentry';
 
 export default class ErrorBoundary extends Component {
   constructor(props) {
@@ -13,6 +14,7 @@ export default class ErrorBoundary extends Component {
 
   componentDidCatch(error, info) {
     console.error('[ErrorBoundary]', error, info?.componentStack);
+    captureException(error, { componentStack: info?.componentStack });
   }
 
   handleRetry = () => {
