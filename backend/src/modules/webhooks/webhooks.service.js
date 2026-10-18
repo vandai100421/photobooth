@@ -98,6 +98,80 @@ const handleFollow = async ({ userId, phone, displayName }) => {
   return { action: 'created', customer_id: created.id };
 };
 
+// ---- SePay bank transaction webhook ----
+
+// SePay gửi 'YYYY-MM-DD HH:mm:ss' theo giờ Việt Nam (GMT+7) nhưng không kèm
+// offset. Gắn '+07:00' để Postgres lưu đúng mốc UTC thay vì hiểu nhầm là UTC.
+const normaliseTransactionDate = (value) => {
+  if (!value || typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(trimmed)) {
+    return `${trimmed.replace(' ', 'T')}+07:00`;
+  }
+  return trimmed;
+};
+
+// Normalise a SePay webhook payload. SePay sends camelCase, but older docs
+// and manual tests use snake_case — accept both.
+const normaliseSepayTransaction = (body = {}) => {
+  const sepayId = body.id ?? body.sepay_id ?? null;
+  const transferType = body.transferType ?? body.transfer_type ?? null;
+  const amount = body.transferAmount ?? body.transfer_amount ?? 0;
+  return {
+    sepay_id: Number(sepayId),
+    gateway: body.gateway ?? null,
+    transaction_date: normaliseTransactionDate(
+      body.transactionDate ?? body.transaction_date,
+    ),
+    account_number: body.accountNumber ?? body.account_number ?? null,
+    sub_account: body.subAccount ?? body.sub_account ?? null,
+    code: body.code ?? null,
+    content: body.content ?? null,
+    transfer_type: transferType,
+    transfer_amount: Number(amount) || 0,
+    accumulated:
+      body.accumulated === null || body.accumulated === undefined
+        ? null
+        : Number(body.accumulated) || 0,
+    reference_code: body.referenceCode ?? body.reference_code ?? null,
+    description: body.description ?? null,
+    raw_payload: body,
+  };
+};
+
+// Persist a SePay transaction. Idempotent: SePay retries the same id when
+// our endpoint errors, so we upsert on the unique sepay_id column and treat
+// an existing row as a no-op duplicate.
+const processSepayWebhook = async (body) => {
+  const tx = normaliseSepayTransaction(body);
+
+  if (!tx.sepay_id || Number.isNaN(tx.sepay_id)) {
+    logger.warn('webhooks sepay: payload missing numeric id');
+    return { action: 'ignored', reason: 'missing sepay id' };
+  }
+
+  const { data, error } = await supabase
+    .from('bank_transactions')
+    .upsert(tx, { onConflict: 'sepay_id', ignoreDuplicates: true })
+    .select('id, sepay_id')
+    .maybeSingle();
+
+  if (error) {
+    logger.error(`webhooks sepay upsert failed: ${error.message}`);
+    throw error;
+  }
+
+  if (!data) {
+    logger.info(`webhooks sepay duplicate sepay_id=${tx.sepay_id}`);
+    return { action: 'duplicate', sepay_id: tx.sepay_id };
+  }
+
+  logger.info(
+    `webhooks sepay stored sepay_id=${tx.sepay_id} type=${tx.transfer_type} amount=${tx.transfer_amount}`,
+  );
+  return { action: 'created', sepay_id: tx.sepay_id, transaction_id: data.id };
+};
+
 // Entry point: verify signature, then dispatch by event name.
 const processZaloEvent = async (body, mac) => {
   if (!zaloService.verifyWebhook(body, mac)) {
@@ -120,4 +194,6 @@ const processZaloEvent = async (body, mac) => {
 module.exports = {
   processZaloEvent,
   normaliseFollowEvent,
+  processSepayWebhook,
+  normaliseSepayTransaction,
 };

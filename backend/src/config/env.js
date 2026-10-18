@@ -28,6 +28,14 @@ const envSchema = z.object({
   // Secret used to protect /api/v1/cron/daily. On Vercel it doubles as the
   // bearer token Vercel Cron attaches automatically (CRON_SECRET convention).
   CRON_SECRET: z.string().min(16).optional(),
+
+  // API Key SePay gửi ở header 'Authorization: Apikey <key>' cho webhook
+  // POST /api/v1/webhooks/sepay. Nếu không đặt, webhook chấp nhận mọi request
+  // (chỉ nên dùng khi test local).
+  SEPAY_WEBHOOK_API_KEY: z.string().optional(),
+
+  // Sentry DSN — nếu đặt, lỗi server được báo về Sentry. Bỏ trống để tắt.
+  SENTRY_DSN: z.string().optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);

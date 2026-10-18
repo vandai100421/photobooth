@@ -189,11 +189,14 @@ In **Settings → Environment Variables**:
 ## 6. Monitoring (optional, recommended)
 
 ### Sentry
-1. Create a project at https://sentry.io (free tier).
-2. Get the DSN.
-3. Add `SENTRY_DSN` to backend env vars.
-4. Instrument `src/app.js` with `@sentry/node` init *(code task for backend
-   agent)* — or follow Sentry's onboarding wizard.
+1. Create a project at https://sentry.io (free tier) — one for backend, one for frontend.
+2. Get the DSN (Settings → Client Keys).
+3. Backend: add `SENTRY_DSN` to backend env vars. Code đã wire sẵn trong
+   `src/config/sentry.js` (init khi có DSN) và `src/middleware/errorHandler.js`
+   (capture lỗi 5xx). Để trống → tự tắt.
+4. Frontend: add `VITE_SENTRY_DSN` to frontend env vars (Vercel). Code đã wire
+   trong `src/utils/sentry.js` + `main.jsx` + `ErrorBoundary`. Để trống → tự tắt.
+5. Redeploy để env mới có hiệu lực.
 
 ### Logs
 - Railway: **Deployments → Logs** (runtime + build).

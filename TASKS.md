@@ -122,7 +122,7 @@
 - [x] Deploy Backend → Vercel Serverless (https://ptb-api-navy.vercel.app) — đổi từ Railway/Render sang Vercel Serverless (free, không ngủ); cron node-cron thay bằng Vercel Cron + endpoint `/api/v1/cron/daily` (CRON_SECRET)
 - [x] Setup production env vars (Vercel: Supabase, JWT_SECRET, CRON_SECRET, FRONTEND_URL, VITE_API_URL, MESSAGE_DRY_RUN=true)
 - [ ] Setup Supabase production + RLS  ← đang dùng chung Supabase project dev; tách production DB khi go-live thật
-- [ ] Setup monitoring (Sentry)  ← cần user làm thủ công
+- [~] Setup monitoring (Sentry)  ← code đã wire (backend `SENTRY_DSN`, frontend `VITE_SENTRY_DSN`); cần user tạo account + DSN
 - [x] Test production (health, CORS, login, cron dry-run)
 - [x] Viết tài liệu HDSD (docs/USER_GUIDE.md)
 - [ ] Bổ sung Zalo OA + Gmail + Cloudinary thật rồi update env vars (hiện MESSAGE_DRY_RUN=true)
@@ -191,3 +191,30 @@
 
 ### Còn lại
 - [ ] Chạy migration `schema_hr_v2.sql` lên Supabase (cần user làm thủ công)
+
+---
+
+## Mở rộng — Thông báo biến động số dư (SePay)
+
+> Tích hợp SePay webhook → phát loa + toast khi có tiền vào. Tài liệu: `docs/SEPAY_WEBHOOK.md`.
+> Migration: `docs/schema_bank_transactions.sql` (chạy sau `docs/schema.sql`).
+
+### Database
+- [x] Bảng `bank_transactions` (sepay_id UNIQUE chống trùng khi retry) + index + RLS
+- [ ] Chạy migration `schema_bank_transactions.sql` lên Supabase (cần user làm thủ công)
+
+### Backend API
+- [x] Module `bank-transactions`: GET /bank-transactions (lọc `after_id`, `transfer_type`, `limit`), GET /bank-transactions/latest
+- [x] Webhook `POST /webhooks/sepay` xác thực API Key (`SEPAY_WEBHOOK_API_KEY`), upsert idempotent
+- [x] Validate payload bằng zod (camelCase + snakeCase), chuẩn hoá timestamp GMT+7
+
+### Frontend UI
+- [x] `BankNotifier` trong Layout: poll 5s, phát bíp + TTS đọc số tiền, toast, bật/tắt theo trình duyệt
+- [x] `notifySound` (Web Audio + Speech API), service `bankTransactionService`
+
+### Bảo mật
+- [x] `.gitignore` chặn `docs/bank-noti-note.txt` (cookie SePay) + `sepay-notifier/config.json`
+
+### Còn lại
+- [ ] Đặt `SEPAY_WEBHOOK_API_KEY` trên Vercel + tạo webhook trên SePay
+- [ ] Test end-to-end với chuyển khoản thật

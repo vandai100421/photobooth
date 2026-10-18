@@ -34,3 +34,9 @@ coverage/
 # Misc
 *.tgz
 .cache/
+
+# SePay notifier (chứa session cookie thật)
+sepay-notifier/config.json
+
+# Ghi chú tạm chứa cookie/CSRF SePay — không được commit
+docs/bank-noti-note.txt
