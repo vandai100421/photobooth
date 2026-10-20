@@ -196,19 +196,22 @@
 
 ## Mở rộng — Quản lý mã chụp (Photobooth/Selfbooth)
 
-> Migration: `docs/schema_booth.sql + schema_booth_v2.sql` (chạy tay trên Supabase SQL Editor).
+> Migration: `docs/schema_booth.sql + schema_booth_v2.sql + schema_booth_daily.sql` (chạy tay trên Supabase SQL Editor).
 > Kế hoạch chi tiết: `docs/BOOTH_SHOOT_PLAN.md`.
 
 ### Database
 - [x] Bảng `booth_shoot_codes`, `booth_media_sessions`, `booth_reconciliations`
+- [x] Bảng `booth_daily_revenue` (doanh thu theo ngày của máy chụp — Dashboard cộng với `daily_revenue`)
 - [x] Index + trigger `updated_at` + RLS + grants
-- [ ] Chạy migration `schema_booth.sql + schema_booth_v2.sql` lên Supabase (cần user làm thủ công)
+- [ ] Chạy migration `schema_booth.sql + schema_booth_v2.sql + schema_booth_daily.sql` lên Supabase (cần user làm thủ công)
 
 ### Backend API
 - [x] `boothClient.js` — login/fetch packages/codes/sessions/create (tolerant response)
 - [x] Module `booth`: accounts, save-account, login, packages, sync, codes, sessions, create-code, summary, reconciliations (CRUD)
 - [x] Mount `/api/v1/booth` + rbac
 - [x] Sensitive keys (password/token) trong settings
+- [x] `POST /booth/:system/sync` ghi thêm doanh thu theo ngày vào `booth_daily_revenue`; lỗi ghi doanh thu không làm hỏng đồng bộ mã/lượt
+- [x] Dashboard (`stats` + `revenue`) cộng `booth_daily_revenue` vào doanh thu hôm nay / tháng / tổng / biểu đồ 6 tháng
 
 ### Frontend UI
 - [x] Trang `ShootCodes` (menu "Mã chụp"): chọn hệ thống + lọc ngày + Đồng bộ

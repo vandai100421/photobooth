@@ -22,6 +22,18 @@ router.post(
   ctrl.login,
 );
 
+// Trạng thái dữ liệu đã thu thập của CẢ 2 hệ (banner trên trang Mã chụp).
+router.get('/data-status', auth, validate(schema.dataStatusSchema), ctrl.dataStatus);
+
+// Doanh thu thực nhận CẢ 2 hệ (Dashboard) — trừ các ca bị đánh dấu lỗi.
+// Query from/to không có :system nên dùng chung schema với data-status.
+router.get(
+  '/revenue-stats',
+  auth,
+  validate(schema.dataStatusSchema),
+  ctrl.revenueStats,
+);
+
 // Gói chụp (chỉ Selfbooth).
 router.get(
   '/:system/packages',
@@ -34,7 +46,7 @@ router.get(
 router.post(
   '/:system/sync',
   auth,
-  rbac('admin', 'manager'),
+  rbac('admin', 'manager', 'staff'),
   validate(schema.syncSchema),
   ctrl.sync,
 );
@@ -66,9 +78,25 @@ router.put(
   ctrl.saveCodeReview,
 );
 
+// Gắn nhãn xử lý theo mã hoặc theo lượt chụp (Dashboard — khách chụp trực tiếp).
+router.put(
+  '/:system/reviews',
+  auth,
+  rbac('admin', 'manager', 'staff'),
+  validate(schema.reviewSchema),
+  ctrl.saveReview,
+);
+
 // Đối chiếu.
 router.get('/:system/summary', auth, validate(schema.listSchema), ctrl.summary);
 router.get('/:system/revenue', auth, validate(schema.listSchema), ctrl.revenue);
+// Lượt chụp lấy trực tiếp từ API ngoài (không qua cache) — cho ảnh preview.
+router.get(
+  '/:system/media-sessions',
+  auth,
+  validate(schema.listSchema),
+  ctrl.mediaSessions,
+);
 router.get('/:system/ledger', auth, validate(schema.listSchema), ctrl.ledger);
 router.get(
   '/:system/reconciliations',

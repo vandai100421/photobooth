@@ -27,6 +27,9 @@ const TOKEN_KEYS = [
   'id_token',
   'idToken',
   'api_token',
+  'sb_session',
+  'session',
+  'session_id',
 ];
 const TOKEN_CONTAINERS = ['data', 'session', 'result', 'auth', 'payload'];
 
@@ -62,16 +65,21 @@ const LIST_KEYS = [
 ];
 
 // Trả mảng dữ liệu từ nhiều shape response (mảng trực tiếp / lồng 1–2 cấp).
-const extractList = (payload) => {
+// `prefer` ưu tiên các key chỉ định trước (vd: doanh thu Selfbooth cần 'uses'
+// thay vì 'packages').
+const extractList = (payload, prefer = []) => {
   if (Array.isArray(payload)) return payload;
   if (!payload || typeof payload !== 'object') return [];
-  for (const k of LIST_KEYS) {
+  const keys = prefer.length
+    ? [...prefer, ...LIST_KEYS.filter((k) => !prefer.includes(k))]
+    : LIST_KEYS;
+  for (const k of keys) {
     if (Array.isArray(payload[k])) return payload[k];
   }
-  for (const k of LIST_KEYS) {
+  for (const k of keys) {
     const v = payload[k];
     if (v && typeof v === 'object' && !Array.isArray(v)) {
-      const nested = extractList(v);
+      const nested = extractList(v, prefer);
       if (nested.length) return nested;
     }
   }
@@ -103,8 +111,14 @@ const normalizeCode = (system, item) => {
   const externalId = pick(raw, ['id', 'voucher_id', 'code_id', 'external_id']);
   const code = pick(raw, ['code', 'voucher_code', 'shoot_code']);
 
+  // API Selfbooth mới trả `status: 'used'` (chữ thường) + `used_at`, không trả
+  // `used`/`use_count` ⇒ suy diễn cả từ status (không phân biệt hoa/thường) và used_at.
+  const statusRaw = String(pick(raw, ['status', 'state']) ?? '').toUpperCase();
+  const usedAt = pick(raw, ['used_at', 'redeemed_at', 'used_time']);
   const used =
     toBool(pick(raw, ['used', 'is_used', 'redeemed', 'is_redeemed'])) ||
+    statusRaw === 'USED' ||
+    Boolean(usedAt) ||
     (Number(pick(raw, ['use_count', 'used_count', 'redeemed_count'])) || 0) > 0;
   const revoked = toBool(
     pick(raw, ['revoked', 'is_revoked', 'cancelled', 'is_cancelled']),
@@ -242,7 +256,16 @@ const baseUrl = (config) => (config.baseUrl || '').replace(/\/$/, '');
 async function getJson(config, token, url, { method = 'GET', body } = {}) {
   const headers = { Accept: 'application/json' };
   if (body) headers['Content-Type'] = 'application/json';
-  if (token) headers.Authorization = `Bearer ${token}`;
+  if (token) {
+    if (config.system === 'selfbooth') {
+      headers.Cookie = `sb_session=${token}`;
+    } else {
+      headers.Authorization = `Bearer ${token}`;
+    }
+  }
+  if (config.system === 'selfbooth') {
+    headers['x-sb-portal'] = 'owner';
+  }
   if (config.system === 'photobooth' && config.tenant) {
     headers['x-booth-tenant'] = config.tenant;
   }
@@ -282,24 +305,23 @@ async function getJson(config, token, url, { method = 'GET', body } = {}) {
 // Login
 // -----------------------------------------------------------------------------
 
-// Đăng nhập lấy token. Trả về chuỗi token.
+// Đăng nhập lấy session (sb_session). Trả về chuỗi session.
 async function login(config, { turnstileToken } = {}) {
   const base = baseUrl(config);
 
   if (config.system === 'selfbooth') {
     const loginBody = {
-      login: config.email,
+      email: config.email,
       password: config.password,
-      remember: true,
     };
-    if (turnstileToken) loginBody.turnstileToken = turnstileToken;
-    const data = await getJson(config, null, `${base}/v1/auth/login`, {
+    if (turnstileToken) loginBody.turnstile_token = turnstileToken;
+    const data = await getJson(config, null, `${base}/v1/web/auth/login`, {
       method: 'POST',
       body: loginBody,
     });
     const token = extractToken(data);
     if (!token) {
-      throw new AppError('Đăng nhập Selfbooth không trả về token.', 502);
+      throw new AppError('Đăng nhập Selfbooth không trả về session.', 502);
     }
     return token;
   }
@@ -334,9 +356,7 @@ async function fetchCodes(config, token, { from, to, status } = {}) {
     const params = new URLSearchParams();
     if (from) params.set('from', from);
     if (to) params.set('to', to);
-    const url = `${base}/v1/portal/shoot-codes${
-      params.toString() ? `?${params}` : ''
-    }`;
+    const url = `${base}/v1/web/codes${params.toString() ? `?${params}` : ''}`;
     return extractList(await getJson(config, token, url));
   }
 
@@ -358,12 +378,12 @@ async function fetchSessions(config, token, { from, to } = {}) {
   if (from) params.set('from', from);
   if (to) params.set('to', to);
 
+  const qs = params.toString() ? `?${params}` : '';
+  const tenant = encodeURIComponent(config.tenant || '');
   const url =
     config.system === 'selfbooth'
-      ? `${base}/v1/portal/sessions${params.toString() ? `?${params}` : ''}`
-      : `${base}/portal/${encodeURIComponent(
-          config.tenant || '',
-        )}/media-sessions${params.toString() ? `?${params}` : ''}`;
+      ? `${base}/v1/web/capture-sessions${qs}`
+      : `${base}/portal/${tenant}/media-sessions${qs}`;
   return extractList(await getJson(config, token, url));
 }
 
@@ -372,40 +392,43 @@ async function fetchPackages(config, token) {
   const base = baseUrl(config);
   const url =
     config.system === 'selfbooth'
-      ? `${base}/v1/portal/shoot-packages`
+      ? `${base}/v1/web/packages`
       : `${base}/v1/portal/shoot-packages`;
   return extractList(await getJson(config, token, url));
 }
 
 // Doanh thu theo lượt dùng (chủ yếu Selfbooth). Trả { summary, uses, raw }.
-async function fetchRevenue(config, token, { from, to } = {}) {
+async function fetchRevenue(config, token, { from, to, limit = 100 } = {}) {
   const base = baseUrl(config);
   const params = new URLSearchParams();
-  if (from) params.set('from', from);
-  if (to) params.set('to', to);
+
+  if (config.system === 'selfbooth') {
+    // Selfbooth: ?month=YYYY-MM&date=YYYY-MM-DD&limit=N
+    // month lấy từ `from`, date lấy từ `to` (xem docs/api-selfbooth.txt).
+    const monthDate = from || to;
+    const dayDate = to || from;
+    if (monthDate) params.set('month', monthDate.slice(0, 7));
+    if (dayDate) params.set('date', dayDate);
+    params.set('limit', String(limit));
+  } else {
+    if (from) params.set('from', from);
+    if (to) params.set('to', to);
+  }
 
   const qs = params.toString() ? `?${params}` : '';
-  // Selfbooth: thử nhiều path (docs đã xác thực /v1/web/revenue).
-  const candidates =
+  const path =
     config.system === 'selfbooth'
-      ? ['/v1/web/revenue', '/v1/portal/revenue']
-      : ['/v1/portal/revenue'];
+      ? '/v1/web/revenue'
+      : `/portal/${encodeURIComponent(config.tenant || '')}/revenue`;
 
-  let lastErr = null;
-  for (const path of candidates) {
-    try {
-      const data = await getJson(config, token, `${base}${path}${qs}`);
-      const uses = extractList(data);
-      const summary =
-        (data && typeof data === 'object' && data.summary) ||
-        (data?.data && data.data.summary) ||
-        null;
-      return { summary, uses, raw: data };
-    } catch (err) {
-      lastErr = err;
-    }
-  }
-  throw lastErr || new AppError('Không lấy được doanh thu Selfbooth.', 502);
+  const data = await getJson(config, token, `${base}${path}${qs}`);
+  // Selfbooth trả cả `packages` (tổng hợp) và `uses` (từng lượt) → ưu tiên `uses`.
+  const uses = extractList(data, ['uses']);
+  const summary =
+    (data && typeof data === 'object' && data.summary) ||
+    (data?.data && data.data.summary) ||
+    null;
+  return { summary, uses, raw: data };
 }
 
 // Tạo mã chụp mới. Trả bản ghi đã chuẩn hoá.
@@ -415,7 +438,7 @@ async function createCode(config, token, payload = {}) {
   let body;
 
   if (config.system === 'selfbooth') {
-    url = `${base}/v1/portal/shoot-codes`;
+    url = `${base}/v1/web/codes`;
     body = {
       code: payload.code || '',
       count: payload.count || 1,

@@ -64,7 +64,7 @@ Còn chờ **credentials/thao tác thủ công bên ngoài** (Zalo OA, Gmail, Cl
 ### Module Mã chụp — Photobooth/Selfbooth 🆕
 - Backend module `booth`: `/api/v1/booth/*` (accounts, login, packages, sync, codes, sessions, create-code, summary, reconciliations)
 - Service `boothClient.js`: gọi API ngoài (login/fetch/create), xử lý tolerant nhiều shape response
-- DB (migration `docs/schema_booth.sql + schema_booth_v2.sql + schema_booth_v3.sql`): `booth_shoot_codes`, `booth_media_sessions`, `booth_reconciliations`, `booth_code_reviews`
+- DB (migration `docs/schema_booth.sql + schema_booth_v2.sql + schema_booth_v3.sql + schema_booth_daily.sql`): `booth_shoot_codes`, `booth_media_sessions`, `booth_reconciliations`, `booth_code_reviews`, `booth_daily_revenue`
 - Frontend: trang `ShootCodes` (nav "Mã chụp") — 2 tab Mã chụp (gộp mã + lượt chụp) / Tiền nhập tay 🆕
 - **Gộp mã + lượt chụp (2026-10-11):** bảng mã hiển thị kèm lượt chụp liên kết, trạng thái suy diễn
   (`used/unused/error/revoked/missing_session`), lọc theo trạng thái + tìm kiếm, tùy chọn "Hiện lượt lạ".
@@ -93,6 +93,11 @@ Còn chờ **credentials/thao tác thủ công bên ngoài** (Zalo OA, Gmail, Cl
 - Modal tạo mã chụp (Selfbooth: chọn gói; Photobooth: loại Giảm giá/`cash` — Tiền mặt/`cash_code` + giá trị)
 - Đồng bộ chỉ THÊM mã/session mới (dedupe theo `system`+`code`/`external_id`)
 - Nhập tay "tiền mặt máy ghi" + "tiền mặt thực nhận" → đối chiếu chênh lệch
+- **Đồng bộ doanh thu máy vào Dashboard (2026-10-20):** `POST /booth/:system/sync` ghi thêm doanh thu theo
+  **NGÀY** vào bảng mới `booth_daily_revenue` (Photobooth: `data[].amount_required`; Selfbooth: `daily[].revenue_vnd`,
+  thiếu thì `uses[].price_vnd`) — Dashboard cộng `daily_revenue` (nhập tay) + bảng này cho doanh thu hôm nay /
+  tháng / tổng và biểu đồ 6 tháng. Lỗi ghi doanh thu chỉ báo toast, không làm hỏng đồng bộ mã/lượt.
+  Migration: `docs/schema_booth_daily.sql`.
 - Kế hoạch chi tiết: `docs/BOOTH_SHOOT_PLAN.md`
 
 ---
@@ -139,7 +144,7 @@ Còn chờ **credentials/thao tác thủ công bên ngoài** (Zalo OA, Gmail, Cl
 - [ ] Bổ sung Zalo OA + Gmail SMTP + Cloudinary thật → update env vars trên Vercel → redeploy
 
 ### 5. Mã chụp Photobooth/Selfbooth — API ngoài (thủ công)
-- [ ] Chạy migration `docs/schema_booth.sql` + `docs/schema_booth_v2.sql` + `docs/schema_booth_v3.sql` (bảng `booth_code_reviews`) trên Supabase SQL Editor
+- [ ] Chạy migration `docs/schema_booth.sql` + `docs/schema_booth_v2.sql` + `docs/schema_booth_v3.sql` (bảng `booth_code_reviews`) + `docs/schema_booth_daily.sql` (bảng `booth_daily_revenue`) trên Supabase SQL Editor
 - [ ] **Selfbooth:** vào "Tài khoản API" → mở boothme.tech trên trình duyệt → đăng nhập → F12 → Application → Cookies → copy cookie domain boothme.tech → dán vào ô "Cookie / Token phiên" (chỉ cần Base URL + Studio ID, không cần email/mật khẩu) → Lưu
 - [ ] Cung cấp tài khoản Photobooth (email/password hoặc token) → nhập ở nút "Tài khoản API" trong trang Mã chụp
 - [ ] Xác nhận đường dẫn login thật nếu khác mặc định (Selfbooth `/v1/web/auth/login`, Photobooth `/auth/login`)

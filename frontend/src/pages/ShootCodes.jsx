@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import StatCard from '../components/shared/StatCard';
+import SettingsGuide from '../components/shared/SettingsGuide';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
 import Select from '../components/ui/Select';
 import Badge from '../components/ui/Badge';
 import Table from '../components/ui/Table';
 import Toast from '../components/ui/Toast';
-import BoothAccountModal from '../components/booth/BoothAccountModal';
 import CreateCodeModal from '../components/booth/CreateCodeModal';
 import CodeDetailModal from '../components/booth/CodeDetailModal';
 import boothService from '../services/boothService';
@@ -19,9 +20,8 @@ import {
   BOOTH_CODE_STATUS_LABELS,
   BOOTH_CODE_STATUS_BADGE_VARIANT,
   BOOTH_CODE_STATUS_FILTER_OPTIONS,
-  BOOTH_LEDGER_FILTER_OPTIONS,
-  BOOTH_REVENUE_SUMMARY_LABELS,
   PHOTOBOOTH_CODE_TYPE_LABELS,
+  ROUTES,
 } from '../utils/constants';
 
 function toISODate(date) {
@@ -37,12 +37,6 @@ function getErrorMessage(err, fallback) {
     fallback ||
     'Đã có lỗi xảy ra.'
   );
-}
-
-function formatDay(value) {
-  if (!value || typeof value !== 'string') return '—';
-  const [y, m, d] = value.slice(0, 10).split('-');
-  return y && m && d ? `${d}/${m}/${y}` : value;
 }
 
 // Suy luận nguyên nhân lỗi từ dữ liệu lượt chụp (raw) để nhân viên hiểu rõ.
@@ -99,28 +93,63 @@ function StatusCell({ statusKey, row }) {
   );
 }
 
-const TABS = [
-  { value: 'codes', label: 'Mã chụp' },
-  { value: 'ledger', label: 'Sổ doanh thu' },
-  { value: 'revenue', label: 'Doanh thu' },
-  { value: 'portal', label: 'Tổng hợp Portal' },
-  { value: 'manual', label: 'Tiền nhập tay' },
-];
+// Thẻ trạng thái thu thập dữ liệu của 1 nguồn (Photobooth / Selfbooth).
+function DataStatusCard({ item, active, onSelect }) {
+  const hasData = (item?.codes ?? 0) + (item?.sessions ?? 0) > 0;
+  const badge = !item?.connected
+    ? { variant: 'danger', label: 'Chưa kết nối tài khoản' }
+    : hasData
+      ? { variant: 'success', label: 'Đã thu thập dữ liệu' }
+      : { variant: 'warning', label: 'Đã kết nối, chưa có dữ liệu' };
+
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className={`rounded-xl border bg-white p-3 text-left shadow-sm transition ${
+        active ? 'border-brand-600 ring-1 ring-brand-600' : 'border-gray-200'
+      }`}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-sm font-semibold text-gray-800">
+          {BOOTH_SYSTEM_LABELS[item?.system] ?? item?.system}
+        </span>
+        <Badge variant={badge.variant}>{badge.label}</Badge>
+      </div>
+      <p className="mt-1 text-xs text-gray-600">
+        {item?.codes ?? 0} mã · {item?.sessions ?? 0} lượt chụp trong khoảng
+        ngày
+      </p>
+      <p className="mt-0.5 text-xs text-gray-500">
+        {item?.last_synced_at
+          ? `Đồng bộ gần nhất: ${formatDateTime(item.last_synced_at)}`
+          : 'Chưa từng đồng bộ'}
+        {item?.account ? ` · ${item.account}` : ''}
+      </p>
+      {!item?.connected && (
+        <Link
+          to={ROUTES.SETTINGS}
+          className="mt-1 inline-block text-xs font-medium text-brand-600 hover:underline"
+        >
+          Cấu hình tài khoản trong Cài đặt →
+        </Link>
+      )}
+    </button>
+  );
+}
 
 export default function ShootCodes() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const isAdmin = user?.role === 'admin';
-  const canSync = ['admin', 'manager'].includes(user?.role);
-  const canDeleteRecon = ['admin', 'manager'].includes(user?.role);
+  const canSync = ['admin', 'manager', 'staff'].includes(user?.role);
 
   const [system, setSystem] = useState('photobooth');
   const [from, setFrom] = useState(toISODate(new Date()));
   const [to, setTo] = useState(toISODate(new Date()));
-  const [tab, setTab] = useState('codes');
 
   const [summary, setSummary] = useState(null);
   const [codes, setCodes] = useState([]);
-  const [reconciliations, setReconciliations] = useState([]);
 
   const [statusFilters, setStatusFilters] = useState([]);
   const [search, setSearch] = useState('');
@@ -128,32 +157,15 @@ export default function ShootCodes() {
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState('');
+  const [dataStatus, setDataStatus] = useState(null);
   const [toast, setToast] = useState({ message: '', variant: 'info' });
   const showToast = useCallback(
     (message, variant = 'success') => setToast({ message, variant }),
     [],
   );
 
-  const [revenue, setRevenue] = useState(null);
-  const [revenueLoading, setRevenueLoading] = useState(false);
-  const [revenueError, setRevenueError] = useState('');
-
-  const [ledger, setLedger] = useState(null);
-  const [ledgerLoading, setLedgerLoading] = useState(false);
-  const [ledgerError, setLedgerError] = useState('');
-  const [ledgerStatusFilters, setLedgerStatusFilters] = useState([]);
-  const [ledgerSearch, setLedgerSearch] = useState('');
-
-  const [accountOpen, setAccountOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [detailRow, setDetailRow] = useState(null);
-
-  const [reconDate, setReconDate] = useState(toISODate(new Date()));
-  const [machineCash, setMachineCash] = useState('');
-  const [actualCash, setActualCash] = useState('');
-  const [reconNote, setReconNote] = useState('');
-  const [savingRecon, setSavingRecon] = useState(false);
-  const [reconError, setReconError] = useState('');
 
   const rangeValid = from && to && from <= to;
 
@@ -163,14 +175,12 @@ export default function ShootCodes() {
     setError('');
     try {
       const params = { from, to };
-      const [sumRes, codesRes, reconRes] = await Promise.all([
+      const [sumRes, codesRes] = await Promise.all([
         boothService.summary(system, params),
         boothService.codes(system, params),
-        boothService.reconciliations(system, params),
       ]);
       setSummary(sumRes?.data ?? null);
       setCodes(codesRes?.data ?? []);
-      setReconciliations(reconRes?.data ?? []);
     } catch (err) {
       setError(getErrorMessage(err, 'Không tải được dữ liệu.'));
     } finally {
@@ -182,43 +192,20 @@ export default function ShootCodes() {
     load();
   }, [load]);
 
-  const loadRevenue = useCallback(async () => {
+  // Trạng thái thu thập dữ liệu của CẢ 2 nguồn (hiển thị ở banner trên).
+  const loadDataStatus = useCallback(async () => {
     if (!rangeValid) return;
-    setRevenueLoading(true);
-    setRevenueError('');
     try {
-      const res = await boothService.revenue(system, { from, to });
-      setRevenue(res?.data ?? null);
-    } catch (err) {
-      setRevenue(null);
-      setRevenueError(getErrorMessage(err, 'Không tải được doanh thu.'));
-    } finally {
-      setRevenueLoading(false);
+      const res = await boothService.dataStatus({ from, to });
+      setDataStatus(res?.data ?? null);
+    } catch {
+      setDataStatus(null);
     }
-  }, [system, from, to, rangeValid]);
+  }, [from, to, rangeValid]);
 
   useEffect(() => {
-    if (tab === 'revenue') loadRevenue();
-  }, [tab, loadRevenue]);
-
-  const loadLedger = useCallback(async () => {
-    if (!rangeValid) return;
-    setLedgerLoading(true);
-    setLedgerError('');
-    try {
-      const res = await boothService.ledger(system, { from, to });
-      setLedger(res?.data ?? null);
-    } catch (err) {
-      setLedger(null);
-      setLedgerError(getErrorMessage(err, 'Không tải được sổ doanh thu.'));
-    } finally {
-      setLedgerLoading(false);
-    }
-  }, [system, from, to, rangeValid]);
-
-  useEffect(() => {
-    if (tab === 'ledger') loadLedger();
-  }, [tab, loadLedger]);
+    loadDataStatus();
+  }, [loadDataStatus]);
 
   const handleSync = async () => {
     if (!rangeValid) return;
@@ -227,62 +214,23 @@ export default function ShootCodes() {
       const res = await boothService.sync(system, { from, to });
       const c = res?.data?.codes ?? {};
       const s = res?.data?.sessions ?? {};
+      const rev = res?.data?.revenue ?? {};
       showToast(
         `Đồng bộ xong: mã +${c.inserted ?? 0} (cập nhật ${c.updated ?? 0}), ` +
-          `lượt chụp +${s.inserted ?? 0} (cập nhật ${s.updated ?? 0}).`,
+          `lượt chụp +${s.inserted ?? 0} (cập nhật ${s.updated ?? 0}), ` +
+          `doanh thu ${formatCurrency(rev.total ?? 0, '0đ')}` +
+          (rev.days ? ` / ${rev.days} ngày` : '') +
+          '.',
       );
+      if (rev.error) {
+        showToast(`Chưa ghi doanh thu Dashboard: ${rev.error}`, 'error');
+      }
       await load();
-      if (tab === 'revenue') await loadRevenue();
-      else if (tab === 'ledger') await loadLedger();
+      await loadDataStatus();
     } catch (err) {
       showToast(getErrorMessage(err, 'Đồng bộ thất bại.'), 'error');
     } finally {
       setSyncing(false);
-    }
-  };
-
-  const handleSaveRecon = async () => {
-    setReconError('');
-    if (!reconDate) {
-      setReconError('Vui lòng chọn ngày.');
-      return;
-    }
-    const machine = Number(machineCash) || 0;
-    const actual = Number(actualCash) || 0;
-    if (machine < 0 || actual < 0) {
-      setReconError('Số tiền không hợp lệ.');
-      return;
-    }
-    setSavingRecon(true);
-    try {
-      await boothService.saveReconciliation(system, {
-        reconciliation_date: reconDate,
-        machine_cash: machine,
-        actual_cash: actual,
-        note: reconNote || null,
-      });
-      showToast('Đã lưu tiền đối chiếu.');
-      setMachineCash('');
-      setActualCash('');
-      setReconNote('');
-      await load();
-    } catch (err) {
-      setReconError(getErrorMessage(err, 'Không lưu được đối chiếu.'));
-    } finally {
-      setSavingRecon(false);
-    }
-  };
-
-  const handleDeleteRecon = async (row) => {
-    if (!window.confirm(`Xoá đối chiếu ngày ${formatDay(row.reconciliation_date)}?`)) {
-      return;
-    }
-    try {
-      await boothService.removeReconciliation(system, row.id);
-      showToast('Đã xoá đối chiếu.');
-      await load();
-    } catch (err) {
-      showToast(getErrorMessage(err, 'Không xoá được đối chiếu.'), 'error');
     }
   };
 
@@ -331,137 +279,7 @@ export default function ShootCodes() {
   const counts = summary?.counts ?? {};
   const codeRevenue = summary?.revenue ?? {};
 
-  const revenueSummary = revenue?.summary ?? {};
-  const revenueUses = revenue?.uses ?? [];
-  const revenueSummaryKeys = Object.keys(revenueSummary).filter(
-    (k) => BOOTH_REVENUE_SUMMARY_LABELS[k],
-  );
-
   const openDetail = useCallback((row) => setDetailRow(row), []);
-
-  const ledgerRows = ledger?.rows ?? [];
-  const ledgerTotals = ledger?.totals ?? {};
-
-  const ledgerFilteredRows = useMemo(() => {
-    const q = ledgerSearch.trim().toLowerCase();
-    return ledgerRows.filter((r) => {
-      if (
-        ledgerStatusFilters.length &&
-        !ledgerStatusFilters.includes(r.derived_status)
-      ) {
-        return false;
-      }
-      if (q) {
-        const hay = [
-          r.code,
-          r.package_name,
-          r.machine_name,
-          r.review?.staff_reason,
-          r.review?.staff_note,
-        ]
-          .filter(Boolean)
-          .join(' ')
-          .toLowerCase();
-        if (!hay.includes(q)) return false;
-      }
-      return true;
-    });
-  }, [ledgerRows, ledgerStatusFilters, ledgerSearch]);
-
-  const ledgerStatusCounts = useMemo(() => {
-    const counts = { '': ledgerRows.length };
-    ledgerRows.forEach((r) => {
-      counts[r.derived_status] = (counts[r.derived_status] || 0) + 1;
-    });
-    return counts;
-  }, [ledgerRows]);
-
-  const ledgerColumns = useMemo(
-    () => [
-      {
-        key: 'code',
-        label: 'Mã',
-        render: (_v, row) => (
-          <span className="font-mono text-xs font-medium text-gray-900">
-            {row.code || '—'}
-          </span>
-        ),
-      },
-      {
-        key: 'type_kind',
-        label: 'Loại / Gói',
-        render: (_v, row) => {
-          if (row.row_type === 'orphan_session') {
-            return 'Lượt chụp (mã đã xóa)';
-          }
-          if (system === 'photobooth') {
-            return PHOTOBOOTH_CODE_TYPE_LABELS[row.type] ?? row.type ?? '—';
-          }
-          return row.package_name || row.code_kind || '—';
-        },
-      },
-      { key: 'machine_name', label: 'Phòng / Máy', render: (v) => v || '—' },
-      {
-        key: 'value',
-        label: 'Giá trị mã',
-        render: (v, row) =>
-          row.row_type === 'orphan_session' || v == null
-            ? '—'
-            : formatCurrency(v),
-      },
-      {
-        key: 'paid_amount',
-        label: 'Đã thu',
-        render: (v, row) =>
-          row.row_type === 'orphan_session' || v == null
-            ? '—'
-            : formatCurrency(v),
-      },
-      {
-        key: 'revenue',
-        label: 'Doanh thu lượt',
-        render: (v, row) => {
-          if (!v) return '—';
-          return (
-            <span
-              className={
-                row.is_test ? 'text-gray-400' : 'font-medium text-gray-800'
-              }
-            >
-              {formatCurrency(v)}
-              {row.is_test ? ' (test)' : ''}
-            </span>
-          );
-        },
-      },
-      {
-        key: 'status',
-        label: 'Trạng thái',
-        render: (_v, row) => (
-          <StatusCell statusKey={row.derived_status} row={row} />
-        ),
-      },
-      {
-        key: 'used_at',
-        label: 'Thời điểm',
-        render: (v) => (v ? formatDateTime(v) : '—'),
-      },
-      {
-        key: 'note',
-        label: 'Ghi chú',
-        render: (_v, row) => {
-          const r = row.review;
-          if (!r || (!r.staff_reason && !r.staff_note)) return '—';
-          return (
-            <span className="text-xs text-gray-600">
-              {[r.staff_reason, r.staff_note].filter(Boolean).join(' — ')}
-            </span>
-          );
-        },
-      },
-    ],
-    [system],
-  );
 
   const codesColumns = useMemo(
     () => [
@@ -539,94 +357,6 @@ export default function ShootCodes() {
     [system, openDetail],
   );
 
-  const revenueColumns = useMemo(
-    () => [
-      {
-        key: 'code',
-        label: 'Mã',
-        render: (v) => (
-          <span className="font-mono text-xs font-medium text-gray-900">
-            {v || '—'}
-          </span>
-        ),
-      },
-      { key: 'package_name', label: 'Gói', render: (v) => v || '—' },
-      { key: 'room_name', label: 'Phòng', render: (v) => v || '—' },
-      { key: 'device_name', label: 'Thiết bị', render: (v) => v || '—' },
-      {
-        key: 'price_vnd',
-        label: 'Số tiền',
-        render: (v) => (v == null ? '—' : formatCurrency(v)),
-      },
-      {
-        key: 'used_at',
-        label: 'Thời điểm',
-        render: (v) => (v ? formatDateTime(v) : '—'),
-      },
-    ],
-    [],
-  );
-
-  const reconColumns = useMemo(
-    () => [
-      {
-        key: 'reconciliation_date',
-        label: 'Ngày',
-        render: (v) => formatDay(v),
-      },
-      {
-        key: 'machine_cash',
-        label: 'Máy ghi (đ)',
-        render: (v) => formatCurrency(v),
-      },
-      {
-        key: 'actual_cash',
-        label: 'Thực nhận (đ)',
-        render: (v) => formatCurrency(v),
-      },
-      {
-        key: 'difference',
-        label: 'Chênh lệch',
-        render: (_v, row) => {
-          const diff = (Number(row.actual_cash) || 0) - (Number(row.machine_cash) || 0);
-          return (
-            <span
-              className={
-                diff === 0
-                  ? 'text-gray-600'
-                  : diff > 0
-                    ? 'font-medium text-green-600'
-                    : 'font-medium text-red-600'
-              }
-            >
-              {formatCurrency(diff)}
-            </span>
-          );
-        },
-      },
-      { key: 'note', label: 'Ghi chú', render: (v) => v || '—' },
-      ...(canDeleteRecon
-        ? [
-            {
-              key: 'actions',
-              label: 'Thao tác',
-              render: (_v, row) => (
-                <Button
-                  variant="danger"
-                  size="sm"
-                  onClick={() => handleDeleteRecon(row)}
-                >
-                  Xoá
-                </Button>
-              ),
-            },
-          ]
-        : []),
-    ],
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [canDeleteRecon],
-  );
-
   const systemLabel = BOOTH_SYSTEM_LABELS[system] ?? system;
 
   return (
@@ -641,7 +371,10 @@ export default function ShootCodes() {
         <h1 className="text-2xl font-bold text-gray-800">Mã chụp</h1>
         <div className="flex flex-wrap items-center gap-2">
           {isAdmin && (
-            <Button variant="secondary" onClick={() => setAccountOpen(true)}>
+            <Button
+              variant="secondary"
+              onClick={() => navigate(ROUTES.SETTINGS)}
+            >
               Tài khoản API
             </Button>
           )}
@@ -697,12 +430,8 @@ export default function ShootCodes() {
           </Button>
           <Button
             variant="secondary"
-            onClick={() => {
-              if (tab === 'revenue') loadRevenue();
-              else if (tab === 'ledger') loadLedger();
-              else load();
-            }}
-            loading={loading || revenueLoading || ledgerLoading}
+            onClick={load}
+            loading={loading}
           >
             Tải lại
           </Button>
@@ -714,29 +443,26 @@ export default function ShootCodes() {
         )}
         {!canSync && (
           <p className="mt-2 text-xs text-amber-600">
-            Chỉ quản trị viên/quản lý mới được đồng bộ dữ liệu.
+            Bạn không có quyền đồng bộ dữ liệu.
           </p>
         )}
       </div>
 
-      <div className="flex gap-1 border-b border-gray-200">
-        {TABS.map((t) => (
-          <button
-            key={t.value}
-            type="button"
-            onClick={() => setTab(t.value)}
-            className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium transition ${
-              tab === t.value
-                ? 'border-brand-600 text-brand-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
+      {/* Banner trạng thái thu thập dữ liệu của 2 nguồn */}
+      {dataStatus && (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {BOOTH_SYSTEM_OPTIONS.map((opt) => (
+            <DataStatusCard
+              key={opt.value}
+              item={dataStatus.systems?.[opt.value]}
+              active={system === opt.value}
+              onSelect={() => setSystem(opt.value)}
+            />
+          ))}
+        </div>
+      )}
 
-      {error && tab !== 'revenue' && tab !== 'ledger' && (
+      {error && (
         <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
           {error}
           <button
@@ -746,12 +472,13 @@ export default function ShootCodes() {
           >
             Thử lại
           </button>
+          {' — '}
+          <SettingsGuide message="kiểm tra tài khoản hệ máy tại" />
         </div>
       )}
 
-      {tab === 'codes' && (
-        <div className="space-y-4">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+      <div className="space-y-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 lg:grid-cols-5">
             <StatCard
               title="Tổng mã"
               value={counts.codes ?? 0}
@@ -847,243 +574,6 @@ export default function ShootCodes() {
             onRowClick={openDetail}
           />
         </div>
-      )}
-
-      {tab === 'ledger' && (
-        <div className="space-y-4">
-          {ledgerError && (
-            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-              {ledgerError}
-              <button
-                type="button"
-                onClick={loadLedger}
-                className="ml-2 underline hover:text-amber-900"
-              >
-                Thử lại
-              </button>
-            </div>
-          )}
-
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
-            <StatCard
-              title="Doanh thu lượt chụp"
-              value={formatCurrency(ledgerTotals.session_revenue_total ?? 0)}
-              icon={<span aria-hidden="true">💵</span>}
-              variant="success"
-            />
-            <StatCard
-              title="Giá trị mã chưa dùng"
-              value={formatCurrency(ledgerTotals.value_unused ?? 0)}
-              icon={<span aria-hidden="true">⏳</span>}
-              variant="warning"
-            />
-            <StatCard
-              title="Tiền đã thu"
-              value={formatCurrency(ledgerTotals.paid_amount_total ?? 0)}
-              icon={<span aria-hidden="true">🧾</span>}
-              variant="info"
-            />
-            <StatCard
-              title="Lượt dùng mã đã xóa"
-              value={ledgerTotals.orphan_count ?? 0}
-              icon={<span aria-hidden="true">🗑️</span>}
-              variant={
-                (ledgerTotals.orphan_count ?? 0) > 0 ? 'danger' : 'default'
-              }
-            />
-            <StatCard
-              title="Doanh thu mã đã xóa"
-              value={formatCurrency(ledgerTotals.orphan_revenue ?? 0)}
-              icon={<span aria-hidden="true">⚠️</span>}
-              variant={
-                (ledgerTotals.orphan_revenue ?? 0) > 0 ? 'danger' : 'default'
-              }
-            />
-          </div>
-
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 bg-white p-3 shadow-sm">
-            <div className="flex flex-wrap gap-1">
-              {BOOTH_LEDGER_FILTER_OPTIONS.map((opt) => {
-                const active = opt.value
-                  ? ledgerStatusFilters.includes(opt.value)
-                  : ledgerStatusFilters.length === 0;
-                const count = ledgerStatusCounts[opt.value] ?? 0;
-                return (
-                  <button
-                    key={opt.value || 'all'}
-                    type="button"
-                    title={
-                      opt.value
-                        ? 'Bấm để bật/tắt lọc theo trạng thái này'
-                        : 'Bỏ lọc, xem tất cả trạng thái'
-                    }
-                    onClick={() =>
-                      setLedgerStatusFilters((prev) => {
-                        if (!opt.value) return [];
-                        return prev.includes(opt.value)
-                          ? prev.filter((v) => v !== opt.value)
-                          : [...prev, opt.value];
-                      })
-                    }
-                    className={`rounded-full px-3 py-1 text-xs font-medium transition ${
-                      active
-                        ? 'bg-brand-600 text-white'
-                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                    }`}
-                  >
-                    {opt.label}
-                    <span className="ml-1 opacity-70">({count})</span>
-                  </button>
-                );
-              })}
-            </div>
-            <div className="w-56">
-              <Input
-                name="ledgerSearch"
-                placeholder="Tìm mã / gói / ghi chú..."
-                value={ledgerSearch}
-                onChange={(e) => setLedgerSearch(e.target.value)}
-              />
-            </div>
-          </div>
-
-          <div className="text-sm text-gray-500">
-            <strong>{systemLabel}</strong> — {ledgerTotals.codes_total ?? 0} mã (
-            {ledgerTotals.codes_used ?? 0} đã dùng,{' '}
-            {ledgerTotals.codes_unused ?? 0} chưa dùng) ·{' '}
-            {ledgerTotals.orphan_count ?? 0} lượt dùng mã đã xóa · tổng giá trị{' '}
-            {formatCurrency(ledgerTotals.value_total ?? 0)}.
-          </div>
-
-          <Table
-            columns={ledgerColumns}
-            data={ledgerFilteredRows}
-            loading={ledgerLoading}
-            emptyText="Chưa có dữ liệu. Bấm Đồng bộ để tải từ API."
-            rowKey="key"
-          />
-        </div>
-      )}
-
-      {tab === 'revenue' && (
-        <div className="space-y-4">
-          {revenueError ? (
-            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-              {revenueError}
-              <button
-                type="button"
-                onClick={loadRevenue}
-                className="ml-2 underline hover:text-amber-900"
-              >
-                Thử lại
-              </button>
-            </div>
-          ) : (
-            <>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
-                {revenueSummaryKeys.map((key) => {
-                  const value = revenueSummary[key] ?? 0;
-                  return (
-                    <StatCard
-                      key={key}
-                      title={BOOTH_REVENUE_SUMMARY_LABELS[key]}
-                      value={
-                        key.endsWith('_vnd')
-                          ? formatCurrency(value)
-                          : Number(value).toLocaleString('vi-VN')
-                      }
-                      variant={key.endsWith('_vnd') ? 'success' : 'info'}
-                    />
-                  );
-                })}
-              </div>
-
-              <div className="text-sm text-gray-500">
-                Doanh thu trực tiếp từ API <strong>{systemLabel}</strong> theo
-                khoảng ngày đã chọn.
-              </div>
-
-              <Table
-                columns={revenueColumns}
-                data={revenueUses}
-                loading={revenueLoading}
-                emptyText="Chưa có lượt dùng nào trong khoảng ngày."
-                rowKey={(row) => row.id ?? row.code ?? row.used_at}
-              />
-            </>
-          )}
-        </div>
-      )}
-
-      {tab === 'manual' && (
-        <div className="space-y-4">
-          <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-            <h2 className="mb-3 text-lg font-semibold text-gray-800">
-              Nhập tiền đối chiếu ({systemLabel})
-            </h2>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
-              <Input
-                label="Ngày"
-                name="reconciliation_date"
-                type="date"
-                value={reconDate}
-                onChange={(e) => setReconDate(e.target.value)}
-              />
-              <Input
-                label="Tiền mặt máy ghi (đ)"
-                name="machine_cash"
-                type="number"
-                min="0"
-                step="1000"
-                placeholder="VD: 1200000"
-                value={machineCash}
-                onChange={(e) => setMachineCash(e.target.value)}
-              />
-              <Input
-                label="Tiền mặt thực nhận (đ)"
-                name="actual_cash"
-                type="number"
-                min="0"
-                step="1000"
-                placeholder="VD: 1200000"
-                value={actualCash}
-                onChange={(e) => setActualCash(e.target.value)}
-              />
-              <div className="flex items-end">
-                <Button onClick={handleSaveRecon} loading={savingRecon}>
-                  Lưu
-                </Button>
-              </div>
-            </div>
-            <div className="mt-3">
-              <Input
-                label="Ghi chú"
-                name="recon_note"
-                placeholder="VD: Chênh 20k do hoàn tiền khách"
-                value={reconNote}
-                onChange={(e) => setReconNote(e.target.value)}
-              />
-            </div>
-            {reconError && (
-              <p className="mt-2 text-xs text-red-600">{reconError}</p>
-            )}
-          </div>
-
-          <Table
-            columns={reconColumns}
-            data={reconciliations}
-            loading={loading}
-            emptyText="Chưa có dữ liệu đối chiếu"
-            rowKey="id"
-          />
-        </div>
-      )}
-
-      <BoothAccountModal
-        open={accountOpen}
-        onClose={() => setAccountOpen(false)}
-        onSaved={load}
-      />
 
       <CreateCodeModal
         open={createOpen}
@@ -1092,8 +582,6 @@ export default function ShootCodes() {
         onCreated={() => {
           showToast('Đã tạo mã chụp.');
           load();
-          if (tab === 'revenue') loadRevenue();
-          else if (tab === 'ledger') loadLedger();
         }}
       />
 

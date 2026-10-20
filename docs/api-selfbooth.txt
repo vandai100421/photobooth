@@ -1,0 +1,73 @@
+api login 
+const axios = require('axios');
+let data = JSON.stringify({
+  "email": "thetap^@studio.vn",
+  "password": "12345678",
+  "turnstile_token": "1.0p5VS02Xbj7ZdP2Av5NTOcFnDTmV4hAfOYvt_w3Jp3OdmUhgsD12xqvoHHf28tsiNdI4dsdTcz4VOZ4uHHIY7fpXQOHLJHth44OkXHQLlRhiaNOFOxaI-ZVg5VkHlAzljWzkzi7nyIYrEiitvcEx5vvfkzYwfGzJo1NkoIwKJDNiew8M8UIUeFnPgluy7F-YbFBCiaI2dmKZ3odHHr6XEGJMYUIDvNK0ve_1lt57D8Z8_56OkNxZ29luCyZeUI0N945WaIxciJoUp_up-s4xcueyxu7o1ojRItMPXRqvO_JRAc4JZghdNrGqwbo5tzR6Zp9hfCUbh8PhQH012CqJaJvnP6ESPIL6h8_e6-xhiznbTPq661pxroGR48VrQhosoQKadngRbVIJMyScx-Uipf9VT88sdgE_DRxnwMZehuTpU_nNw1oCtlfMZIgfYitSTFUUrzN548MtWdiDo-EffHJxaZqUG7MFV7_ROhaK3nQgjBT3qO9jQjr1so5hDpZ8gcpH7TNxlp4YrSEg4zJMUGHGvIz4FeVk2FOj3wODcEt7o_rWVS7pW6xHW5GvBfr2g72iWyfxiGISub-tcBfTQh7Q_9nXFjnv5qgaRop1wiZ8WZ8IYzE52UZSU88hdVp8jO8pvyZJL5_b86JlAEGiCx-1U5VDDDbHh-lAbBNZULvgfJ7MUdtBBFOMgfsbotjq.VvyZd7PJH00wIdKIrtZRLA.57c20b8627f6aec2bdb42dded2c723137c63bec59d557f8abc277c254a14db77"
+});
+
+let config = {
+  method: 'post',
+  maxBodyLength: Infinity,
+  url: 'https://boothme.tech/v1/web/auth/login',
+  headers: { 
+    'accept': '*/*', 
+    'accept-language': 'vi,en-US;q=0.9,en;q=0.8', 
+    'content-type': 'application/json', 
+    'origin': 'https://boothme.tech', 
+    'priority': 'u=1, i', 
+    'referer': 'https://boothme.tech/', 
+    'sec-ch-ua': '"Chromium";v="154", "Google Chrome";v="154", "Not A^(Brand";v="99"', 
+    'sec-ch-ua-mobile': '?0', 
+    'sec-ch-ua-platform': '"Windows"', 
+    'sec-fetch-dest': 'empty', 
+    'sec-fetch-mode': 'cors', 
+    'sec-fetch-site': 'same-origin', 
+    'user-agent': 'Mozilla/5.0 ^(Windows NT 10.0; Win64; x64^) AppleWebKit/537.36 ^(KHTML, like Gecko^) Chrome/154.0.0.0 Safari/537.36', 
+    'x-sb-portal': 'owner'
+  },
+  data : data
+};
+
+axios.request(config)
+.then((response) => {
+  console.log(JSON.stringify(response.data));
+})
+.catch((error) => {
+  console.log(error);
+});
+
+
+
+api lấy doanh thu
+const axios = require('axios');
+
+let config = {
+  method: 'get',
+  maxBodyLength: Infinity,
+  url: 'https://boothme.tech/v1/web/revenue?month=2026-10&limit=100&date=2026-10-18',
+  headers: { 
+    'accept': '*/*', 
+    'accept-language': 'vi,en-US;q=0.9,en;q=0.8', 
+    'priority': 'u=1, i', 
+    'referer': 'https://boothme.tech/', 
+    'sec-ch-ua': '"Chromium";v="154", "Google Chrome";v="154", "Not A^(Brand";v="99"', 
+    'sec-ch-ua-mobile': '?0', 
+    'sec-ch-ua-platform': '"Windows"', 
+    'sec-fetch-dest': 'empty', 
+    'sec-fetch-mode': 'cors', 
+    'sec-fetch-site': 'same-origin', 
+    'user-agent': 'Mozilla/5.0 ^(Windows NT 10.0; Win64; x64^) AppleWebKit/537.36 ^(KHTML, like Gecko^) Chrome/154.0.0.0 Safari/537.36', 
+    'x-sb-portal': 'owner', 
+    'Cookie': 'sb_session=ws_Mb1tyRi-pGOV8n_DIL8Rshqy7Ga-U4yYP9R_3AxaJHI'
+  }
+};
+
+axios.request(config)
+.then((response) => {
+  console.log(JSON.stringify(response.data));
+})
+.catch((error) => {
+  console.log(error);
+});
+

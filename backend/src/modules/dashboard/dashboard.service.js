@@ -90,9 +90,10 @@ const assertOk = (result, label) => {
 const sumAmount = (rows) =>
   (rows || []).reduce((acc, r) => acc + Number(r.amount || 0), 0);
 
-// Doanh thu nhập tay (daily_revenue). Nếu bảng chưa được tạo (migration
-// chưa chạy) thì coi như không có dữ liệu thay vì làm sập dashboard.
-const normalizeDailyRevenue = (res) => {
+// Doanh thu theo ngày (daily_revenue nhập tay + booth_daily_revenue từ máy chụp).
+// Nếu bảng chưa được tạo (migration chưa chạy) thì coi như không có dữ liệu
+// thay vì làm sập dashboard.
+const normalizeDailyRevenue = (res, label = 'daily revenue') => {
   if (res.error) {
     if (
       res.error.code === 'PGRST205' ||
@@ -101,10 +102,7 @@ const normalizeDailyRevenue = (res) => {
     ) {
       return [];
     }
-    throw new AppError(
-      `Failed to fetch daily revenue: ${res.error.message}`,
-      500,
-    );
+    throw new AppError(`Failed to fetch ${label}: ${res.error.message}`, 500);
   }
   return res.data || [];
 };
@@ -125,6 +123,7 @@ const getStats = async () => {
     vouchersActiveRes,
     completedBookingsRes,
     dailyRevenueRes,
+    boothRevenueRes,
     messagesTodayRes,
     birthdaysRes,
   ] = await Promise.all([
@@ -166,6 +165,9 @@ const getStats = async () => {
       .from('daily_revenue')
       .select('revenue_date, amount'),
     supabase
+      .from('booth_daily_revenue')
+      .select('revenue_date, amount'),
+    supabase
       .from('message_logs')
       .select('id', { count: 'exact', head: true })
       .in('status', ['sent', 'delivered'])
@@ -189,7 +191,11 @@ const getStats = async () => {
   assertOk(birthdaysRes, 'birthdays');
 
   const completed = completedBookingsRes.data || [];
-  const dailyRows = normalizeDailyRevenue(dailyRevenueRes);
+  // Cộng 2 nguồn theo ngày: sổ nhập tay và doanh thu 2 hệ máy chụp.
+  const dailyRows = [
+    ...normalizeDailyRevenue(dailyRevenueRes),
+    ...normalizeDailyRevenue(boothRevenueRes, 'booth daily revenue'),
+  ];
   // Lấy YYYY-MM-DD / YYYY-MM từ thời gian CỤC BỘ (không dùng .slice() của ISO
   // đã đổi qua UTC — khi múi giờ +07 sẽ lệch về ngày hôm trước).
   const now = new Date();
@@ -240,7 +246,7 @@ const getRevenue = async ({ from, to }) => {
   const startISO = dateToStartISO(from);
   const endISO = dateToEndISO(to);
 
-  const [bookingsRes, dailyRes] = await Promise.all([
+  const [bookingsRes, dailyRes, boothRes] = await Promise.all([
     supabase
       .from('bookings')
       .select('booking_date, amount')
@@ -253,21 +259,29 @@ const getRevenue = async ({ from, to }) => {
       .select('revenue_date, amount')
       .gte('revenue_date', from)
       .lte('revenue_date', to),
+    supabase
+      .from('booth_daily_revenue')
+      .select('revenue_date, amount')
+      .gte('revenue_date', from)
+      .lte('revenue_date', to),
   ]);
 
   if (bookingsRes.error) {
     throw new AppError(`Failed to fetch revenue: ${bookingsRes.error.message}`, 500);
   }
 
-  const dailyRows = normalizeDailyRevenue(dailyRes);
   const dailyBuckets = new Map();
-  dailyRows.forEach((r) => {
-    const key = (r.revenue_date || '').slice(0, 7);
-    if (!key || !/^\d{4}-\d{2}$/.test(key)) return;
-    const entry = dailyBuckets.get(key) || { revenue: 0 };
-    entry.revenue += Number(r.amount || 0);
-    dailyBuckets.set(key, entry);
-  });
+  const addDaily = (rows) => {
+    rows.forEach((r) => {
+      const key = (r.revenue_date || '').slice(0, 7);
+      if (!key || !/^\d{4}-\d{2}$/.test(key)) return;
+      const entry = dailyBuckets.get(key) || { revenue: 0 };
+      entry.revenue += Number(r.amount || 0);
+      dailyBuckets.set(key, entry);
+    });
+  };
+  addDaily(normalizeDailyRevenue(dailyRes));
+  addDaily(normalizeDailyRevenue(boothRes, 'booth daily revenue'));
 
   const buckets = new Map();
   (bookingsRes.data || []).forEach((b) => {

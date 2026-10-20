@@ -68,16 +68,47 @@ const revenue = asyncHandler(async (req, res) => {
   return success(res, data);
 });
 
+const mediaSessions = asyncHandler(async (req, res) => {
+  const { from, to } = req.query;
+  const data = await boothService.getLiveSessions(req.params.system, {
+    from,
+    to,
+  });
+  return success(res, data);
+});
+
+const dataStatus = asyncHandler(async (req, res) => {
+  const { from, to } = req.query;
+  const data = await boothService.getDataStatus({ from, to });
+  return success(res, data);
+});
+
 const ledger = asyncHandler(async (req, res) => {
   const { from, to } = req.query;
   const data = await boothService.getLedger(req.params.system, { from, to });
   return success(res, data);
 });
 
+// Doanh thu thực nhận 2 hệ máy cho Dashboard (trừ các ca bị đánh dấu lỗi).
+const revenueStats = asyncHandler(async (req, res) => {
+  const { from, to } = req.query;
+  const data = await boothService.getRevenueStats({ from, to });
+  return success(res, data);
+});
+
 const saveCodeReview = asyncHandler(async (req, res) => {
   const data = await boothService.upsertCodeReview(
     req.params.system,
-    req.params.code,
+    { ...req.body, code: req.params.code },
+    req.user.id,
+  );
+  return success(res, data);
+});
+
+// Gắn nhãn xử lý theo mã HOẶC theo lượt chụp (Dashboard — khách chụp trực tiếp).
+const saveReview = asyncHandler(async (req, res) => {
+  const data = await boothService.upsertCodeReview(
+    req.params.system,
     req.body,
     req.user.id,
   );
@@ -115,8 +146,12 @@ module.exports = {
   createCode,
   summary,
   revenue,
+  mediaSessions,
+  dataStatus,
   ledger,
+  revenueStats,
   saveCodeReview,
+  saveReview,
   reconciliations,
   upsertReconciliation,
   removeReconciliation,

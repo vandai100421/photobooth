@@ -402,13 +402,6 @@ export const ROUTES = {
   SCHEDULE: '/schedule',
   REWARDS: '/rewards',
   SHOOT: '/shoot-codes',
-  PORTAL_REVENUE: '/portal-revenue',
-};
-
-// Cấu hình API Portal Photobooth ngoài (external).
-export const PHOTOBOOTH_PORTAL = {
-  BASE_URL: 'https://photobooth-api.boothstudio2026.workers.dev',
-  TENANT: 'thetap@studio.vn',
 };
 
 // Phương thức thanh toán trong response revenue portal.
@@ -510,8 +503,13 @@ export const BOOTH_CODE_STATUS_FILTER_OPTIONS = [
   { value: 'revoked', label: 'Đã huỷ' },
 ];
 
-// Lý do lỗi chọn sẵn cho nhân viên.
+// Lý do lỗi chọn sẵn cho nhân viên (ưu tiên lý do chất lượng ảnh / in).
 export const BOOTH_ERROR_REASON_OPTIONS = [
+  { value: 'Chất lượng ảnh kém', label: 'Chất lượng ảnh kém' },
+  { value: 'In lỗi / mực lem', label: 'In lỗi / mực lem' },
+  { value: 'Ảnh sai màu', label: 'Ảnh sai màu' },
+  { value: 'Số bản in thiếu', label: 'Số bản in thiếu' },
+  { value: 'Khách không hài lòng', label: 'Khách không hài lòng' },
   { value: 'Hết giấy in', label: 'Hết giấy in' },
   { value: 'Lỗi máy ảnh', label: 'Lỗi máy ảnh' },
   { value: 'Khách huỷ', label: 'Khách huỷ' },
@@ -540,7 +538,6 @@ export const NAV_ITEMS = [
   { to: ROUTES.CUSTOMERS, label: 'Khách hàng', icon: '👥' },
   { to: ROUTES.VOUCHERS, label: 'Voucher', icon: '🎟️' },
   { to: ROUTES.SHOOT, label: 'Mã chụp', icon: '📸' },
-  { to: ROUTES.PORTAL_REVENUE, label: 'Tổng hợp doanh thu', icon: '🧾' },
   { to: ROUTES.BOOKINGS, label: 'Booking', icon: '📆' },
   { to: ROUTES.POSTS, label: 'Bài viết', icon: '📝' },
   { to: ROUTES.HOLIDAYS, label: 'Ngày lễ', icon: '🎉' },

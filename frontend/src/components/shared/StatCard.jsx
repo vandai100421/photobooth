@@ -17,6 +17,7 @@ const ICON_WRAP = {
 export default function StatCard({
   title,
   value,
+  sub,
   icon,
   variant = 'default',
 }) {
@@ -32,6 +33,9 @@ export default function StatCard({
           <p className="mt-1 text-2xl font-bold text-gray-900">
             {value ?? '—'}
           </p>
+          {sub != null && (
+            <p className="mt-1 text-xs text-gray-500">{sub}</p>
+          )}
         </div>
         {icon != null && (
           <div

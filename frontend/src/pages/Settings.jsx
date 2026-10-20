@@ -7,6 +7,7 @@ import Badge from '../components/ui/Badge';
 import { useToast } from '../components/ui/Toast';
 import { useAuth } from '../hooks/useAuth';
 import settingsService from '../services/settingsService';
+import BoothAccountPanel from '../components/booth/BoothAccountPanel';
 import { ROLES } from '../utils/constants';
 
 const SENSITIVE_KEYS = new Set([
@@ -52,9 +53,11 @@ function toFormObject(settingsArray) {
   return obj;
 }
 
-function Section({ title, description, children, footer }) {
+function Section({ title, description, children, footer, className = '' }) {
   return (
-    <section className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+    <section
+      className={`rounded-xl border border-gray-200 bg-white p-5 shadow-sm ${className}`}
+    >
       <div className="mb-4">
         <h2 className="text-lg font-semibold text-gray-800">{title}</h2>
         {description && (
@@ -267,7 +270,8 @@ export default function Settings() {
         <div>
           <h1 className="text-2xl font-bold text-gray-800">Cài đặt</h1>
           <p className="mt-0.5 text-sm text-gray-500">
-            Quản lý thông tin quán, Zalo OA, Gmail và tự động hóa.
+            Quản lý thông tin quán, tài khoản hệ máy, Zalo OA, Gmail và tự động
+            hóa. Khi trang khác báo lỗi thiếu token / tài khoản, hãy sửa tại đây.
           </p>
         </div>
         {!isAdmin && (
@@ -320,6 +324,14 @@ export default function Settings() {
               placeholder="THE TAP"
               disabled={!isAdmin}
             />
+          </Section>
+
+          <Section
+            title="Tài khoản hệ thống chụp ảnh"
+            description="Đăng nhập Photobooth / Selfbooth để lấy mã chụp, lượt chụp và doanh thu. Trang Mã chụp và Dashboard dùng cấu hình này."
+            className="xl:col-span-2"
+          >
+            <BoothAccountPanel />
           </Section>
 
           <Section

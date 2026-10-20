@@ -4,7 +4,20 @@
 > Trạng thái: `[ ]` chưa làm · `[~]` đang làm · `[x]` xong · `[!]` bị chặn
 > Cập nhật sau mỗi session.
 
-Cập nhật lần cuối: 2026-10-11
+Cập nhật lần cuối: 2026-10-12
+
+## Nhật ký thay đổi
+
+- **2026-10-12 — Sửa 2 API lỗi ở trang "Tổng hợp doanh thu"**:
+  - `boothClient.js`: đường dẫn Selfbooth đổi sang `/v1/web/*` (đã xác minh 401 = có tồn tại; `/v1/portal/*` trả 404);
+    login Selfbooth → `POST /v1/web/auth/login` body `{ email, password, turnstile_token? }`;
+    `fetchRevenue` bỏ vòng thử path (path sai làm lỗi 404 che mất lỗi 401) → mỗi hệ đúng 1 path:
+    Selfbooth `/v1/web/revenue`, Photobooth `/portal/{tenant}/revenue` (path cũ `/v1/portal/revenue` trả 403).
+  - Backend thêm `GET /api/v1/booth/:system/media-sessions` (gọi live, không cache).
+  - Frontend `PortalRevenue.jsx` gọi Portal (revenue + media-sessions) qua backend proxy thay vì gọi thẳng
+    từ trình duyệt (trước đó 401 vì không kèm token). `portalRevenueService.js` chỉ còn helper preview.
+  - `fetchUpstream`: lỗi 401 Selfbooth trả thông báo rõ "phiên hết hạn — dán cookie mới" thay vì "not_found".
+  - Đã test: revenue PB 200 (193 dòng, tổng 8.834.000đ), media-sessions PB 200, Selfbooth trả thông báo hết hạn.
 
 ---
 
@@ -72,6 +85,8 @@ package_id
 ### Migration hiện có
 - `docs/schema_booth.sql` — bảng gốc.
 - `docs/schema_booth_v2.sql` — **bổ sung cột theo shape API thật** (idempotent, ALTER TABLE). Chạy sau schema_booth.sql.
+- `docs/schema_booth_v3.sql` — `booth_code_reviews` (ghi chú/đánh dấu xử lý mã của nhân viên).
+- `docs/schema_booth_daily.sql` — `booth_daily_revenue` (doanh thu theo ngày của máy chụp cho Dashboard).
 
 ### Các bảng
 1. **`booth_shoot_codes`** — cache mã chụp (UNIQUE `(system, code)`).
@@ -79,6 +94,9 @@ package_id
 2. **`booth_media_sessions`** — cache lượt chụp (UNIQUE `(system, external_id)`).
    - Phát hiện thêm: `code_used`, `code_kind`, `package_name`, `amount`, `revenue`, `total_prints/prints_cut/prints_nocut`, `status`, `hwid`, `device_name`, `ended_at`, `source`, `is_test`, `finish_reason`, `expected_photos`, `cover_image`
 3. **`booth_reconciliations`** — tiền nhập tay theo ngày (UNIQUE `(system, reconciliation_date)`).
+4. **`booth_code_reviews`** — trạng thái xử lý do nhân viên nhập (UNIQUE `(system, code)`), không bị ghi đè khi sync.
+5. **`booth_daily_revenue`** — doanh thu theo ngày của từng hệ máy (UNIQUE `(system, revenue_date)`), ghi khi bấm
+   **Đồng bộ**; Dashboard cộng với `daily_revenue` (nhập tay).
 
 **Liên kết đối chiếu thực tế:**
 - Photobooth: `booth_shoot_codes.redeemed_session_id` = `booth_media_sessions.session_id` (external_id dạng `session_...`). Session **không** có `code`.
@@ -93,7 +111,7 @@ package_id
 ## 4. Backend — module `booth`
 
 **Logic summary đã cập nhật:**
-- Login Selfbooth gửi `{ login, password, remember: true }` (đã sửa).
+- Login Selfbooth gửi `{ email, password }` tới `/v1/web/auth/login` (Turnstile chặn đăng nhập server-side → user dán cookie).
 - `normalizeCode`: map đủ field (used/revoked/paid_amount/valid/expires/cancelled/redeemed_*).
 - `normalizeSession`: map `photos_captured`, `capture_started_at`, `code_used`, `amount/revenue`, `is_test`.
 - `getSummary()` lọc `is_test`, nối khóa đúng (PB: redeemed_session_id ↔ external_id; SB: code_used/code ↔ code).
@@ -129,7 +147,7 @@ Files: `boothClient.js`, `booth.service.js`, `booth.controller.js`, `booth.route
 ### Kiểm thử
 - [x] `npm run lint` backend (pass)
 - [x] `npm test` backend (14/14 pass)
-- [ ] Chạy `docs/schema_booth.sql` + `docs/schema_booth_v2.sql` lên Supabase SQL Editor
+- [ ] Chạy migration `docs/schema_booth.sql`, `docs/schema_booth_v2.sql`, `docs/schema_booth_v3.sql`, `docs/schema_booth_daily.sql` lên Supabase SQL Editor
 - [ ] Có credentials thật → test login + sync + tạo mã (đã xác nhận API)
 - [ ] Đối chiếu số liệu thực tế (PB: vouchers ↔ media-sessions qua `redeemed_session_id`)
 
@@ -137,7 +155,7 @@ Files: `boothClient.js`, `booth.service.js`, `booth.controller.js`, `booth.route
 
 ## 7. Việc cần user cung cấp (để test thật)
 
-- [ ] Chạy migration `docs/schema_booth.sql` và `docs/schema_booth_v2.sql` trên Supabase SQL Editor.
+- [ ] Chạy migration `docs/schema_booth.sql` và `docs/schema_booth_v2.sql` (+ `schema_booth_v3.sql`, `schema_booth_daily.sql`) trên Supabase SQL Editor.
 - [ ] (Tùy chọn) Kiểm tra kết nối token sau khi lưu trong Settings (admin → Tài khoản API).
 
 ---

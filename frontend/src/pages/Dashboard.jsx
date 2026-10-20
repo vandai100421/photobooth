@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import StatCard from '../components/shared/StatCard';
-import BarChart from '../components/shared/BarChart';
 import Badge from '../components/ui/Badge';
 import Button from '../components/ui/Button';
 import Skeleton, { SkeletonCard } from '../components/ui/Skeleton';
 import Toast from '../components/ui/Toast';
+import RevenueOverview from '../components/booth/RevenueOverview';
+import RevenueStatsSection from '../components/booth/RevenueStatsSection';
 import dashboardService from '../services/dashboardService';
 import customerService from '../services/customerService';
 import messageService from '../services/messageService';
-import { formatCurrency } from '../utils/formatCurrency';
 import { formatDate } from '../utils/formatDate';
 import {
   ROUTES,
@@ -21,26 +21,6 @@ function toISODate(date) {
   const d = date instanceof Date ? date : new Date(date);
   const pad = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-
-function firstOfMonthMonthsAgo(n) {
-  const d = new Date();
-  d.setDate(1);
-  d.setMonth(d.getMonth() - n);
-  return toISODate(d);
-}
-
-function currentPeriod() {
-  const d = new Date();
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
-}
-
-function formatMonthLabel(period) {
-  if (!period || typeof period !== 'string') return '';
-  const [y, m] = period.split('-');
-  if (!y || !m) return period;
-  return `${m}/${y.slice(2)}`;
 }
 
 function calcAge(birthday) {
@@ -70,10 +50,6 @@ export default function Dashboard() {
   const [statsLoading, setStatsLoading] = useState(true);
   const [statsError, setStatsError] = useState('');
 
-  const [revenueSeries, setRevenueSeries] = useState([]);
-  const [revenueLoading, setRevenueLoading] = useState(true);
-  const [revenueError, setRevenueError] = useState('');
-
   const [birthdays, setBirthdays] = useState([]);
   const [birthdaysLoading, setBirthdaysLoading] = useState(true);
   const [birthdaysError, setBirthdaysError] = useState('');
@@ -89,8 +65,6 @@ export default function Dashboard() {
 
   const today = new Date();
   const todayISO = toISODate(today);
-  const revenueFrom = firstOfMonthMonthsAgo(5);
-  const monthKey = currentPeriod();
 
   const fetchStats = useCallback(async () => {
     setStatsLoading(true);
@@ -104,22 +78,6 @@ export default function Dashboard() {
       setStatsLoading(false);
     }
   }, []);
-
-  const fetchRevenue = useCallback(async () => {
-    setRevenueLoading(true);
-    setRevenueError('');
-    try {
-      const res = await dashboardService.revenue({
-        from: revenueFrom,
-        to: todayISO,
-      });
-      setRevenueSeries(res?.data?.series ?? []);
-    } catch (err) {
-      setRevenueError(getErrorMessage(err, 'Không thể tải doanh thu.'));
-    } finally {
-      setRevenueLoading(false);
-    }
-  }, [revenueFrom, todayISO]);
 
   const fetchBirthdays = useCallback(async () => {
     setBirthdaysLoading(true);
@@ -148,10 +106,9 @@ export default function Dashboard() {
 
   useEffect(() => {
     fetchStats();
-    fetchRevenue();
     fetchBirthdays();
     fetchMessageTotal();
-  }, [fetchStats, fetchRevenue, fetchBirthdays, fetchMessageTotal]);
+  }, [fetchStats, fetchBirthdays, fetchMessageTotal]);
 
   useEffect(() => {
     if (!birthdays.length) {
@@ -179,15 +136,6 @@ export default function Dashboard() {
       cancelled = true;
     };
   }, [birthdays]);
-
-  const revenueMonthValue = revenueSeries
-    .filter((s) => s.period === monthKey)
-    .reduce((sum, s) => sum + (Number(s.revenue) || 0), 0);
-
-  const chartData = revenueSeries.map((s) => ({
-    label: formatMonthLabel(s.period),
-    value: Number(s.revenue) || 0,
-  }));
 
   const handleSendGreeting = (customer) => {
     showToast(
@@ -231,9 +179,9 @@ export default function Dashboard() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {statsLoading ? (
-          Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)
+          Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)
         ) : (
           <>
             <StatCard
@@ -254,18 +202,6 @@ export default function Dashboard() {
               variant="warning"
             />
             <StatCard
-              title="Doanh thu hôm nay"
-              value={formatCurrency(stats?.revenue_today)}
-              icon={<span aria-hidden="true">💰</span>}
-              variant="success"
-            />
-            <StatCard
-              title="Doanh thu tháng"
-              value={formatCurrency(revenueMonthValue)}
-              icon={<span aria-hidden="true">📊</span>}
-              variant="success"
-            />
-            <StatCard
               title="Tin nhắn hôm nay"
               value={messageTotal}
               icon={<span aria-hidden="true">💬</span>}
@@ -275,8 +211,7 @@ export default function Dashboard() {
         )}
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+      <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-lg font-semibold text-gray-800">
               Sinh nhật hôm nay
@@ -372,36 +307,8 @@ export default function Dashboard() {
           )}
         </div>
 
-        <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-gray-800">
-              Doanh thu 6 tháng gần nhất
-            </h2>
-          </div>
-
-          {revenueLoading ? (
-            <div className="py-8">
-              <Skeleton lines={6} height={20} />
-            </div>
-          ) : revenueError ? (
-            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-              {revenueError}
-              <button
-                type="button"
-                onClick={fetchRevenue}
-                className="ml-2 underline hover:text-red-800"
-              >
-                Thử lại
-              </button>
-            </div>
-          ) : (
-            <BarChart
-              data={chartData}
-              formatValue={(v) => formatCurrency(v)}
-            />
-          )}
-        </div>
-      </div>
+      <RevenueStatsSection />
+      <RevenueOverview />
     </div>
   );
 }

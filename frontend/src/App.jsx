@@ -23,7 +23,6 @@ const Settings = lazy(() => import('./pages/Settings'));
 const Schedule = lazy(() => import('./pages/Schedule'));
 const Rewards = lazy(() => import('./pages/Rewards'));
 const ShootCodes = lazy(() => import('./pages/ShootCodes'));
-const PortalRevenue = lazy(() => import('./pages/PortalRevenue'));
 
 function PageFallback() {
   return (
@@ -162,14 +161,6 @@ export default function App() {
               element={
                 <Suspense fallback={<PageFallback />}>
                   <ShootCodes />
-                </Suspense>
-              }
-            />
-            <Route
-              path={ROUTES.PORTAL_REVENUE}
-              element={
-                <Suspense fallback={<PageFallback />}>
-                  <PortalRevenue />
                 </Suspense>
               }
             />

@@ -6,6 +6,14 @@ const systemParamSchema = {
   params: z.object({ system: SYSTEM_ENUM }),
 };
 
+// Trạng thái dữ liệu đã thu thập của CẢ 2 hệ (không theo :system).
+const dataStatusSchema = {
+  query: z.object({
+    from: z.string().date('from phải là YYYY-MM-DD').optional(),
+    to: z.string().date('to phải là YYYY-MM-DD').optional(),
+  }),
+};
+
 // Body cho POST /accounts/:system/login (Selfbooth cần turnstile_token 1 lần).
 const loginSchema = {
   params: systemParamSchema.params,
@@ -62,7 +70,7 @@ const reconciliationSchema = {
   }),
 };
 
-// Ghi chú / trạng thái xử lý mã do nhân viên nhập.
+// Ghi chú / trạng thái xử lý do nhân viên nhập (theo mã hoặc theo lượt chụp).
 const codeReviewSchema = {
   params: z.object({
     system: SYSTEM_ENUM,
@@ -73,6 +81,22 @@ const codeReviewSchema = {
     staff_reason: z.string().max(200).nullish(),
     staff_note: z.string().max(1000).nullish(),
   }),
+};
+
+// Phiên bản chung cho Dashboard: gắn theo mã hoặc theo lượt chụp.
+const reviewSchema = {
+  params: systemParamSchema.params,
+  body: z
+    .object({
+      code: z.string().max(100).nullish(),
+      session_id: z.string().max(200).nullish(),
+      staff_status: z.enum(['ok', 'error', 'resolved']).nullish(),
+      staff_reason: z.string().max(200).nullish(),
+      staff_note: z.string().max(1000).nullish(),
+    })
+    .refine((value) => value.code || value.session_id, {
+      message: 'Cần mã chụp (code) hoặc lượt chụp (session_id)',
+    }),
 };
 
 const saveAccountsSchema = {
@@ -96,9 +120,11 @@ module.exports = {
   systemParamSchema,
   loginSchema,
   listSchema,
+  dataStatusSchema,
   syncSchema,
   createCodeSchema,
   reconciliationSchema,
   codeReviewSchema,
+  reviewSchema,
   saveAccountsSchema,
 };

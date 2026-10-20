@@ -29,11 +29,25 @@ export const boothService = {
       .put(`/booth/${system}/codes/${encodeURIComponent(code)}/review`, data)
       .then((r) => r.data),
 
+  // Gắn nhãn xử lý theo mã HOẶC theo lượt chụp (Dashboard).
+  saveReview: (system, data) =>
+    api.put(`/booth/${system}/reviews`, data).then((r) => r.data),
+
+  // Doanh thu thực nhận CẢ 2 hệ máy (trừ các ca bị đánh dấu lỗi).
+  revenueStats: (params) =>
+    api.get('/booth/revenue-stats', { params }).then((r) => r.data),
+
   summary: (system, params) =>
     api.get(`/booth/${system}/summary`, { params }).then((r) => r.data),
 
   revenue: (system, params) =>
     api.get(`/booth/${system}/revenue`, { params }).then((r) => r.data),
+
+  mediaSessions: (system, params) =>
+    api.get(`/booth/${system}/media-sessions`, { params }).then((r) => r.data),
+
+  dataStatus: (params) =>
+    api.get('/booth/data-status', { params }).then((r) => r.data),
 
   ledger: (system, params) =>
     api.get(`/booth/${system}/ledger`, { params }).then((r) => r.data),

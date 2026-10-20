@@ -7,6 +7,7 @@ const CODES_TABLE = 'booth_shoot_codes';
 const SESSIONS_TABLE = 'booth_media_sessions';
 const RECON_TABLE = 'booth_reconciliations';
 const REVIEWS_TABLE = 'booth_code_reviews';
+const BOOTH_DAILY_TABLE = 'booth_daily_revenue';
 const SETTINGS_TABLE = 'settings';
 
 // Trạng thái lượt chụp bị coi là "có vấn đề" → mã tương ứng là Lỗi.
@@ -19,10 +20,12 @@ const PROBLEM_SESSION_STATUS = new Set([
   'ABORTED',
 ]);
 
-// Mã coi như đã dùng nếu API báo used/redeemed hoặc use_count > 0.
+// Mã coi như đã dùng nếu API báo used/status USED/used_at hoặc use_count > 0.
+// Selfbooth trả status 'used' (chữ thường) + used_at thay vì cờ `used`.
 const isCodeUsed = (c) =>
   Boolean(c.used) ||
-  c.status === 'USED' ||
+  String(c.status || '').toUpperCase() === 'USED' ||
+  Boolean(c.used_at) ||
   Boolean(c.redeemed_session_id) ||
   (Number(c.use_count) || 0) > 0;
 
@@ -44,7 +47,9 @@ const deriveStatus = (code, session) => {
     return 'revoked';
   }
   if (!isCodeUsed(code)) return 'unused';
-  if (!session) return 'missing_session';
+  // Photobooth lưu redeemed_session_id để nối mã ↔ lượt chụp; thiếu lượt ⇒ cảnh báo.
+  // Selfbooth không trả liên kết mã↔lượt ⇒ coi là đã dùng bình thường.
+  if (!session) return code.redeemed_session_id ? 'missing_session' : 'used';
   if (session.is_test) return 'used';
   return sessionHasProblem(session) ? 'error' : 'used';
 };
@@ -74,17 +79,14 @@ const assertRange = (from, to) => {
 };
 
 // Bảng chưa migrate → báo lỗi dễ hiểu thay vì sập.
-const wrapTableError = (error) => {
+const wrapTableError = (error, migration = 'docs/schema_booth.sql') => {
   if (
     error &&
     (error.code === 'PGRST205' ||
       error.code === '42P01' ||
       /does not exist/i.test(error.message || ''))
   ) {
-    throw new AppError(
-      'Chưa chạy migration docs/schema_booth.sql trên Supabase',
-      500,
-    );
+    throw new AppError(`Chưa chạy migration ${migration} trên Supabase`, 500);
   }
   throw new AppError(error.message, 500);
 };
@@ -157,18 +159,23 @@ const getToken = async (config, { forceLogin = false, turnstileToken } = {}) => 
 };
 
 // Gọi API ngoài kèm token. Nếu token hết hạn (upstream 401/403 → 502) thì đăng
-// nhập lại 1 lần rồi thử lại. Chỉ tự đăng nhập lại với Photobooth — Selfbooth phải
-// dán cookie thủ công (Turnstile chặn đăng nhập tự động).
+// nhập lại 1 lần rồi thử lại. Chỉ tự đăng nhập lại với Photobooth — Selfbooth bị
+// Turnstile chặn nên báo user dán cookie mới.
 const fetchUpstream = async (config, fetcher, args = {}) => {
   const token = await getToken(config);
   try {
     return await fetcher(config, token, args);
   } catch (err) {
     const stale =
-      config.system === 'photobooth' &&
-      err instanceof AppError &&
-      /Xác thực API ngoài/.test(err.message);
+      err instanceof AppError && /Xác thực API ngoài/.test(err.message);
     if (!stale) throw err;
+    if (config.system === 'selfbooth') {
+      throw new AppError(
+        'Phiên Selfbooth (sb_session) đã hết hạn — lấy cookie sb_session mới ' +
+          'từ boothme.tech (F12 → Application → Cookies) rồi dán vào ô token.',
+        502,
+      );
+    }
     logger.warn(`booth token ${config.system} hết hạn — đăng nhập lại`);
     const fresh = await getToken(config, { forceLogin: true });
     return fetcher(config, fresh, args);
@@ -384,10 +391,76 @@ const syncSessions = async (system, { from, to } = {}) => {
   return { system, fetched: items.length, inserted, updated };
 };
 
+// Gom doanh thu theo NGÀY từ raw response của hệ máy.
+// - Selfbooth: ưu tiên daily[] (day + revenue_vnd — đã đúng timezone VN),
+//   thiếu thì tính từ uses[].price_vnd theo used_at.
+// - Photobooth: data[].recorded_at + amount_required (khớp với tổng Portal).
+const groupRevenueByDay = (system, raw) => {
+  const out = new Map();
+  const add = (day, amount) => {
+    const key = String(day || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) return;
+    out.set(key, (out.get(key) || 0) + (Number(amount) || 0));
+  };
+
+  if (system === 'selfbooth') {
+    const daily = Array.isArray(raw?.daily) ? raw.daily : [];
+    if (daily.length) {
+      daily.forEach((d) => add(d.day, d.revenue_vnd));
+    } else {
+      (Array.isArray(raw?.uses) ? raw.uses : []).forEach((u) =>
+        add(u.used_at, u.price_vnd),
+      );
+    }
+    return out;
+  }
+
+  (Array.isArray(raw?.data) ? raw.data : []).forEach((r) =>
+    add(r.recorded_at, r.amount_required),
+  );
+  return out;
+};
+
+// Ghi doanh thu theo ngày của hệ máy vào DB cho Dashboard đọc (không live).
+const syncRevenue = async (system, { from, to } = {}) => {
+  assertSystem(system);
+  assertRange(from, to);
+  const config = await getConfig(system);
+  const { raw } = await fetchUpstream(config, boothClient.fetchRevenue, {
+    from,
+    to,
+  });
+
+  const byDay = groupRevenueByDay(system, raw);
+  if (!byDay.size) return { system, days: 0, total: 0 };
+
+  const payload = [...byDay.entries()].map(([revenue_date, amount]) => ({
+    system,
+    revenue_date,
+    amount,
+    synced_at: new Date().toISOString(),
+  }));
+  const { error } = await supabase
+    .from(BOOTH_DAILY_TABLE)
+    .upsert(payload, { onConflict: 'system,revenue_date' });
+  if (error) wrapTableError(error, 'docs/schema_booth_daily.sql');
+
+  const total = payload.reduce((acc, r) => acc + Number(r.amount) || 0, 0);
+  return { system, days: payload.length, total };
+};
+
+// Đồng bộ mã + lượt + doanh thu theo ngày (doanh thu lỗi không làm hỏng phần kia).
 const syncAll = async (system, { from, to, status } = {}) => {
   const codes = await syncCodes(system, { from, to, status });
   const sessions = await syncSessions(system, { from, to });
-  return { codes, sessions };
+  let revenue = { system, days: 0, total: 0 };
+  try {
+    revenue = await syncRevenue(system, { from, to });
+  } catch (err) {
+    logger.warn(`booth sync revenue ${system} thất bại: ${err.message}`);
+    revenue = { system, days: 0, total: 0, error: err.message };
+  }
+  return { codes, sessions, revenue };
 };
 
 // -----------------------------------------------------------------------------
@@ -527,13 +600,19 @@ const removeReconciliation = async (system, id) => {
   return data;
 };
 
-// Lưu ghi chú / trạng thái xử lý của nhân viên cho 1 mã (tách khỏi cache API).
-const upsertCodeReview = async (system, code, payload = {}, createdBy) => {
+// Lưu ghi chú / trạng thái xử lý cho 1 mã hoặc 1 lượt chụp (tách khỏi cache API).
+// Khuyến nghị gắn theo session_id: khách chụp trực tiếp không có mã.
+const upsertCodeReview = async (system, payload = {}, createdBy) => {
   assertSystem(system);
-  if (!code) throw new AppError('Thiếu mã chụp', 400);
+  const code = payload.code ? String(payload.code) : null;
+  const sessionId = payload.session_id ? String(payload.session_id) : null;
+  if (!code && !sessionId) {
+    throw new AppError('Cần mã chụp (code) hoặc lượt chụp (session_id)', 400);
+  }
   const row = {
     system,
-    code: String(code),
+    code,
+    session_id: sessionId,
     staff_status: payload.staff_status ?? null,
     staff_reason: payload.staff_reason ?? null,
     staff_note: payload.staff_note ?? null,
@@ -541,10 +620,10 @@ const upsertCodeReview = async (system, code, payload = {}, createdBy) => {
   };
   const { data, error } = await supabase
     .from(REVIEWS_TABLE)
-    .upsert(row, { onConflict: 'system,code' })
+    .upsert(row, { onConflict: 'system,mark_key' })
     .select('*')
     .single();
-  if (error) wrapTableError(error);
+  if (error) wrapTableError(error, 'docs/schema_booth_v4.sql');
   return data;
 };
 
@@ -567,13 +646,8 @@ const getSummary = async (system, { from, to } = {}) => {
     allCodes.map((c) => c.redeemed_session_id).filter(Boolean),
   );
 
-  const isUsed = (c) =>
-    Boolean(c.used) ||
-    c.status === 'USED' ||
-    Boolean(c.redeemed_session_id);
-
-  const usedCodes = allCodes.filter(isUsed);
-  const unusedCodes = allCodes.filter((c) => !isUsed(c));
+  const usedCodes = allCodes.filter(isCodeUsed);
+  const unusedCodes = allCodes.filter((c) => !isCodeUsed(c));
 
   const sessionMatched = (s) =>
     (s.code && codeSet.has(s.code)) ||
@@ -747,7 +821,205 @@ const fetchPackages = async (system) => {
   return fetchUpstream(config, boothClient.fetchPackages);
 };
 
-// Doanh thu lấy trực tiếp từ API (không cache). Chỉ Selfbooth hỗ trợ.
+// -----------------------------------------------------------------------------
+// Doanh thu thực nhận 2 hệ máy (Dashboard)
+// -----------------------------------------------------------------------------
+// Nguồn tiền: lượt dùng ghi nhận từ API ngoài — Photobooth `amount_required`,
+// Selfbooth `price_vnd`. Nguồn lỗi: mã nhân viên đã đánh dấu "Báo lỗi" ở tab Mã
+// chụp — tiền của các ca đó KHÔNG tính vào thực nhận.
+const useAmount = (system, item) =>
+  system === 'photobooth'
+    ? Number(item.amount_required) || 0
+    : Number(item.price_vnd) || Number(item.revenue) || Number(item.amount) || 0;
+
+// Giữ lại các trường CodeDetailModal cần; bỏ `raw` đầy đủ cho nhẹ payload.
+const toCodeRow = (c) => {
+  if (!c) return null;
+  const s = c.session || null;
+  const raw = s?.raw || {};
+  return {
+    id: c.id,
+    code: c.code,
+    type: c.type,
+    code_kind: c.code_kind,
+    package_name: c.package_name,
+    machine_name: c.machine_name,
+    value: c.value,
+    paid_amount: c.paid_amount,
+    note: c.note,
+    used_at: c.used_at,
+    external_created_at: c.external_created_at,
+    derived_status: c.derived_status,
+    review: c.review,
+    session: s
+      ? {
+        external_id: s.external_id,
+        status: s.status,
+        device_name: s.device_name,
+        captured_at: s.captured_at,
+        media_count: s.media_count,
+        is_test: s.is_test,
+        raw: {
+          finish_reason: raw.finish_reason ?? null,
+          failure_message: raw.failure_message ?? null,
+          failure_code: raw.failure_code ?? null,
+          had_camera_error: raw.had_camera_error ?? null,
+          camera_error_count: raw.camera_error_count ?? null,
+        },
+      }
+      : null,
+  };
+};
+
+// Toàn bộ ghi chú/nhãn xử lý của nhân viên (kèm cả bản ghi theo lượt chụp).
+const listAllReviews = async (system) => {
+  const { data, error } = await supabase
+    .from(REVIEWS_TABLE)
+    .select('*')
+    .eq('system', system);
+  if (error) wrapTableError(error, 'docs/schema_booth_v4.sql');
+  return data || [];
+};
+
+const buildReviewIndex = (reviews) => {
+  const bySession = new Map();
+  const byCode = new Map();
+  reviews.forEach((r) => {
+    if (r.session_id) bySession.set(String(r.session_id), r);
+    if (r.code) byCode.set(String(r.code), r);
+  });
+  return { bySession, byCode };
+};
+
+// Gắn mỗi lượt dùng với mã + nhãn xử lý để biết ca nào bị đánh dấu lỗi.
+// Ưu tiên gắn nhãn theo lượt chụp (khách chụp trực tiếp không có mã).
+const buildUseRows = (system, items, codes, marks) => {
+  const bySession = new Map();
+  const byCode = new Map();
+  codes.forEach((c) => {
+    if (c.redeemed_session_id) bySession.set(String(c.redeemed_session_id), c);
+    if (c.code) byCode.set(String(c.code), c);
+  });
+
+  return (items || []).map((item) => {
+    const sessionId = item.session_id ?? null;
+    const code =
+      system === 'photobooth'
+        ? bySession.get(String(sessionId || '')) || null
+        : byCode.get(String(item.code || '')) || null;
+    const review =
+      (sessionId && marks.bySession.get(String(sessionId))) ||
+      (item.code && marks.byCode.get(String(item.code))) ||
+      code?.review ||
+      null;
+    const isError = review?.staff_status === 'error';
+    return {
+      system,
+      revenue_id: item.revenue_id ?? null,
+      session_id: sessionId ?? code?.redeemed_session_id ?? null,
+      code: code?.code || item.code || null,
+      used_at: item.recorded_at || item.used_at || code?.used_at || null,
+      room_name: item.room_name || null,
+      event_name: item.event_name || null,
+      machine_name: code?.machine_name || null,
+      payment_method: item.payment_method || null,
+      amount: useAmount(system, item),
+      status: isError ? 'error' : 'ok',
+      reason: review?.staff_reason || null,
+      note: review?.staff_note || null,
+      staff_status: review?.staff_status || null,
+      mark_target: sessionId ? { session_id: sessionId } : { code: item.code },
+      code_row: toCodeRow(code),
+    };
+  });
+};
+
+const REVENUE_SYSTEMS = ['photobooth', 'selfbooth'];
+
+const getRevenueStats = async ({ from, to } = {}) => {
+  assertRange(from, to);
+
+  // Doanh thu lấy live từ API ngoài; mã + nhãn lỗi lấy từ cache — nguồn nào
+  // lỗi thì chỉ phần của nó bị bỏ, nguồn còn lại vẫn hiển thị.
+  const [revenues, codeLists, reviewLists] = await Promise.all([
+    Promise.allSettled(
+      REVENUE_SYSTEMS.map((system) => getRevenue(system, { from, to })),
+    ),
+    Promise.allSettled(
+      REVENUE_SYSTEMS.map((system) => listCodesDetailed(system, {})),
+    ),
+    Promise.allSettled(REVENUE_SYSTEMS.map((system) => listAllReviews(system))),
+  ]);
+
+  const sources = {};
+  const rows = [];
+
+  REVENUE_SYSTEMS.forEach((system, i) => {
+    const codes =
+      codeLists[i].status === 'fulfilled' ? codeLists[i].value || [] : [];
+    const marks = buildReviewIndex(
+      reviewLists[i].status === 'fulfilled' ? reviewLists[i].value || [] : [],
+    );
+    const revRes = revenues[i];
+    const empty = {
+      ok: false,
+      message: null,
+      count: 0,
+      gross: 0,
+      error_count: 0,
+      error_amount: 0,
+      net: 0,
+    };
+
+    if (revRes.status === 'rejected') {
+      sources[system] = {
+        ...empty,
+        message: revRes.reason?.message || 'Không lấy được doanh thu.',
+      };
+      return;
+    }
+
+    const systemRows = buildUseRows(
+      system,
+      revRes.value?.uses,
+      codes,
+      marks,
+    );
+    const gross = systemRows.reduce((acc, r) => acc + r.amount, 0);
+    const errorRows = systemRows.filter((r) => r.status === 'error');
+    const errorAmount = errorRows.reduce((acc, r) => acc + r.amount, 0);
+    sources[system] = {
+      ok: true,
+      count: systemRows.length,
+      gross,
+      error_count: errorRows.length,
+      error_amount: errorAmount,
+      net: gross - errorAmount,
+    };
+    rows.push(...systemRows);
+  });
+
+  rows.sort((a, b) =>
+    String(b.used_at || '').localeCompare(String(a.used_at || '')),
+  );
+
+  const totals = REVENUE_SYSTEMS.reduce(
+    (acc, system) => {
+      const source = sources[system];
+      acc.count += source.count;
+      acc.gross += source.gross;
+      acc.error_count += source.error_count;
+      acc.error_amount += source.error_amount;
+      acc.net += source.net;
+      return acc;
+    },
+    { count: 0, gross: 0, error_count: 0, error_amount: 0, net: 0 },
+  );
+
+  return { from: from || null, to: to || null, totals, sources, rows };
+};
+
+// Doanh thu lấy trực tiếp từ API (không cache), cả 2 hệ thống.
 const getRevenue = async (system, { from, to } = {}) => {
   assertSystem(system);
   assertRange(from, to);
@@ -758,6 +1030,85 @@ const getRevenue = async (system, { from, to } = {}) => {
     { from, to },
   );
   return { system, from: from || null, to: to || null, summary, uses, raw };
+};
+
+// Lượt chụp lấy trực tiếp từ API ngoài (không cache) — dùng cho ảnh preview.
+const getLiveSessions = async (system, { from, to } = {}) => {
+  assertSystem(system);
+  assertRange(from, to);
+  const config = await getConfig(system);
+  return fetchUpstream(config, boothClient.fetchSessions, { from, to });
+};
+
+// -----------------------------------------------------------------------------
+// Trạng thái dữ liệu đã thu thập (cả 2 hệ) — cho banner ở FE
+// -----------------------------------------------------------------------------
+
+// Đếm bản ghi cache theo hệ + khoảng ngày (dùng head:true để chỉ lấy count).
+const countCached = async (table, system, { from, to } = {}) => {
+  const timeCol = table === CODES_TABLE ? 'external_created_at' : 'captured_at';
+  let query = supabase
+    .from(table)
+    .select('id', { count: 'exact', head: true })
+    .eq('system', system);
+  if (from) query = query.gte(timeCol, dayStart(from));
+  if (to) query = query.lt(timeCol, dayEndExclusive(to));
+  const { count, error } = await query;
+  if (error) wrapTableError(error);
+  return count || 0;
+};
+
+// Thời điểm đồng bộ gần nhất giữa 2 bảng cache của 1 hệ.
+const lastSyncedAt = async (system) => {
+  const [codes, sessions] = await Promise.all(
+    [CODES_TABLE, SESSIONS_TABLE].map((table) =>
+      supabase
+        .from(table)
+        .select('synced_at')
+        .eq('system', system)
+        .order('synced_at', { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+    ),
+  );
+  if (codes.error) wrapTableError(codes.error);
+  if (sessions.error) wrapTableError(sessions.error);
+  const stamps = [codes.data?.synced_at, sessions.data?.synced_at]
+    .filter(Boolean)
+    .sort();
+  return stamps.length ? stamps[stamps.length - 1] : null;
+};
+
+// Tổng quan dữ liệu đã thu thập của Photobooth + Selfbooth (kết nối, số bản ghi,
+// lần đồng bộ gần nhất) để FE hiển thị "đã có / chưa có dữ liệu nguồn nào".
+const getDataStatus = async ({ from, to } = {}) => {
+  assertRange(from, to);
+  const map = await readSettingsMap();
+  const entries = await Promise.all(
+    boothClient.SYSTEMS.map(async (system) => {
+      const [codes, sessions, last] = await Promise.all([
+        countCached(CODES_TABLE, system, { from, to }),
+        countCached(SESSIONS_TABLE, system, { from, to }),
+        lastSyncedAt(system),
+      ]);
+      return [
+        system,
+        {
+          system,
+          connected: Boolean(map[`${system}_token`]),
+          account: map[`${system}_login_email`] || null,
+          codes,
+          sessions,
+          last_synced_at: last,
+        },
+      ];
+    }),
+  );
+  return {
+    from: from || null,
+    to: to || null,
+    systems: Object.fromEntries(entries),
+  };
 };
 
 const createCode = async (system, payload) => {
@@ -795,6 +1146,7 @@ module.exports = {
   loginAccount,
   syncCodes,
   syncSessions,
+  syncRevenue,
   syncAll,
   listCodes,
   listCodesDetailed,
@@ -805,7 +1157,10 @@ module.exports = {
   upsertCodeReview,
   getSummary,
   getLedger,
+  getRevenueStats,
   fetchPackages,
   getRevenue,
+  getLiveSessions,
+  getDataStatus,
   createCode,
 };
